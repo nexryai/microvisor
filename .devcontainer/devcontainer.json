@@ -1,0 +1,15 @@
+{
+    "name": "microvisor-dev",
+    "build": {
+        "dockerfile": "./Dockerfile"
+    },
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+    "workspaceFolder": "/workspace",
+    "remoteUser": "ubuntu",
+    "overrideCommand": true,
+    "customizations": {
+        "vscode": {
+            "extensions": ["ms-vscode.cmake-tools"]
+        }
+    }
+}
