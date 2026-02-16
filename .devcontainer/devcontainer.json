@@ -5,7 +5,7 @@
     },
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
     "workspaceFolder": "/workspace",
-    "remoteUser": "ubuntu",
+    "remoteUser": "runtime",
     "overrideCommand": true,
     "customizations": {
         "vscode": {

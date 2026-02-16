@@ -1,12 +1,7 @@
-FROM ubuntu:rolling AS mimalloc-builder
+FROM alpine:edge AS mimalloc-builder
 
-RUN apt-get update && \
-    apt-get install -y git curl clang libclang-rt-dev make && \
-    useradd -m -d /var/build builder
-
-RUN curl -L https://github.com/Kitware/CMake/releases/download/v4.2.3/cmake-4.2.3-linux-x86_64.sh -o install_cmake.sh && \
-    bash install_cmake.sh --skip-license --prefix=/usr/local --exclude-subdir && \
-    rm install_cmake.sh
+RUN apk add --no-cache git curl clang clang-static cmake make compiler-rt linux-headers && \
+    adduser -D -h /var/build builder
 
 USER builder
 RUN git clone --depth 1 https://github.com/microsoft/mimalloc /var/build/mimalloc
@@ -18,6 +13,7 @@ RUN CC=clang CXX=clang++ cmake \
     -DCMAKE_C_FLAGS="-rtlib=compiler-rt" \
     -DCMAKE_CXX_FLAGS="-rtlib=compiler-rt" \
     -DCMAKE_SHARED_LINKER_FLAGS="-rtlib=compiler-rt" \
+    -DMI_LIBC_MUSL=ON \
     -DMI_SECURE=ON \
     -DMI_BUILD_SHARED=ON \
     -DMI_BUILD_STATIC=OFF \
@@ -27,17 +23,13 @@ RUN CC=clang CXX=clang++ cmake \
 
 
 # Runtime
-FROM ubuntu:rolling
+FROM alpine:edge
+
+RUN adduser -D runtime
 
 COPY --chown=root:root --from=mimalloc-builder /var/build/mimalloc/out/libmimalloc-secure.so /usr/local/lib/libmimalloc.so
-
 ENV LD_PRELOAD=/usr/local/lib/libmimalloc.so
 ENV MIMALLOC_SECURE=4
 
-RUN apt-get update && \
-    apt-get install -y git curl xz-utils clang clangd lld llvm-20-linker-tools && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN curl -L https://github.com/Kitware/CMake/releases/download/v4.2.3/cmake-4.2.3-linux-x86_64.sh -o install_cmake.sh && \
-    bash install_cmake.sh --skip-license --prefix=/usr/local --exclude-subdir && \
-    rm install_cmake.sh
+RUN apk add --no-cache uutils-coreutils git curl xz clang cmake make lld
+RUN rm -f /usr/bin/c89 /usr/bin/c99 /usr/bin/cc /usr/bin/cpp /usr/bin/gcc* /usr/bin/gcov* /usr/bin/x86_64-alpine-linux-musl-cc /usr/bin/x86_64-alpine-linux-musl-gcc*
