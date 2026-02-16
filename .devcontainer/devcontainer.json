@@ -9,7 +9,15 @@
     "overrideCommand": true,
     "customizations": {
         "vscode": {
-            "extensions": ["ms-vscode.cmake-tools"]
+            "extensions": ["ms-vscode.cmake-tools"],
+            "settings": {
+                "terminal.integrated.profiles.linux": {
+                    "nushell": {
+                        "path": "/usr/bin/nu"
+                    }
+                },
+                "terminal.integrated.defaultProfile.linux": "nushell"
+            }
         }
     }
 }

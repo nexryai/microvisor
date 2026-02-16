@@ -29,6 +29,6 @@ COPY --chown=root:root --from=mimalloc-builder /var/build/mimalloc/out/libmimall
 ENV LD_PRELOAD=/usr/local/lib/libmimalloc.so
 ENV MIMALLOC_SECURE=4
 
-RUN apk add --no-cache uutils-coreutils git curl xz clang cmake make lld
+RUN apk add --no-cache uutils-coreutils nushell git curl xz clang cmake make lld
 RUN rm -f /usr/bin/c89 /usr/bin/c99 /usr/bin/cc /usr/bin/cpp /usr/bin/gcc* /usr/bin/gcov* /usr/bin/x86_64-alpine-linux-musl-cc /usr/bin/x86_64-alpine-linux-musl-gcc*
-RUN adduser -D runtime
+RUN adduser -D -s /usr/bin/nu runtime
