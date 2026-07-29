@@ -1,0 +1,82 @@
+name: SELinux integration
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-helper:
+    name: Build helper (Fedora 44)
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: dnf install -y cargo gcc rust
+
+      - name: Build privileged helper
+        run: cargo build --locked --no-default-features --bin microvisor-helper
+
+      - name: Save Fedora-built helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: microvisor-helper-fedora-44
+          path: target/debug/microvisor-helper
+          if-no-files-found: error
+          retention-days: 1
+
+  test:
+    name: Fedora 44 QEMU
+    needs: build-helper
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      FEDORA_IMAGE_NAME: Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
+      FEDORA_IMAGE_URL: >-
+        https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
+      FEDORA_IMAGE_SHA256: 28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download Fedora-built helper
+        uses: actions/download-artifact@v4
+        with:
+          name: microvisor-helper-fedora-44
+          path: ${{ runner.temp }}/microvisor-helper-fedora-44
+
+      - name: Cache Fedora Cloud image
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/microvisor/${{ env.FEDORA_IMAGE_NAME }}
+          key: fedora-cloud-${{ env.FEDORA_IMAGE_SHA256 }}
+
+      - name: Install QEMU and cloud-init tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cloud-image-utils \
+            qemu-system-x86 \
+            qemu-utils
+
+      - name: Test in an SELinux Enforcing Fedora VM
+        run: bash .github/scripts/run-fedora-selinux-vm.sh
+        env:
+          INTEGRATION_HELPER_PATH: >-
+            ${{ runner.temp }}/microvisor-helper-fedora-44/microvisor-helper
+          VM_CONSOLE_LOG: ${{ runner.temp }}/microvisor-fedora-vm-console.log
+
+      - name: Upload VM console after failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora-44-vm-console
+          path: ${{ runner.temp }}/microvisor-fedora-vm-console.log
+          if-no-files-found: ignore

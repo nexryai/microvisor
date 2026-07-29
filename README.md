@@ -79,13 +79,15 @@ the SELinux Enforcing integration tests described in `AGENTS.md`.
 
 ## Continuous integration
 
-GitHub Actions runs the fast build and unit checks in a Fedora 44 container. A separate
-`ubuntu-24.04` GitHub-hosted job boots the official Fedora 44 Cloud image under QEMU and verifies
+GitHub Actions runs the fast build and unit checks from `.github/workflows/ci.yml` in a Fedora 44
+container. The separate `.github/workflows/selinux-integration.yml` workflow uses an
+`ubuntu-24.04` GitHub-hosted job to boot the official Fedora 44 Cloud image under QEMU and verifies
 that the guest is in SELinux Enforcing mode before running the privileged integration test.
 
-The Cloud image filename and SHA-256 checksum are pinned in `.github/workflows/ci.yml`. The image
-is cached only after the host script verifies that checksum. QEMU uses KVM if `/dev/kvm` is
-available on the hosted runner and otherwise falls back to TCG software emulation.
+The Cloud image filename and SHA-256 checksum are pinned in
+`.github/workflows/selinux-integration.yml`. The image is cached only after the host script
+verifies that checksum. QEMU uses KVM if `/dev/kvm` is available on the hosted runner and
+otherwise falls back to TCG software emulation.
 
 The guest test invokes the Fedora-built helper through its JSON protocol and covers module
 installation, real file labels, process-domain transition, denial from `unconfined_t`, root-side

@@ -17,7 +17,9 @@ This file defines the working contract for coding agents contributing to Microvi
 - `tests/selinux-integration.sh`: destructive helper integration test for a disposable SELinux
   Enforcing Fedora VM.
 - `.github/scripts/run-fedora-selinux-vm.sh`: QEMU lifecycle and guest provisioning for CI.
-- `.github/workflows/ci.yml`: Fedora build checks and the GitHub-hosted QEMU integration job.
+- `.github/workflows/ci.yml`: fast Fedora build, unit, GUI, and metadata checks.
+- `.github/workflows/selinux-integration.yml`: Fedora helper build and the GitHub-hosted QEMU
+  integration test.
 - `PLANS.md`: roadmap and design decisions that are not yet implemented.
 
 ## Non-negotiable security boundaries
