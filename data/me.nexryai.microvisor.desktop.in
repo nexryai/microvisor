@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Microvisor
+Comment=Protect application data with SELinux
+Exec=microvisor
+Icon=me.nexryai.microvisor
+Terminal=false
+Type=Application
+Categories=System;Security;GTK;
+Keywords=SELinux;Security;Sandbox;Policy;GNOME;
+StartupNotify=true

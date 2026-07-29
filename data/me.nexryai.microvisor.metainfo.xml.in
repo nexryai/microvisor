@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>me.nexryai.microvisor</id>
+  <name>Microvisor</name>
+  <summary>Protect application data with SELinux</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Microvisor creates dedicated SELinux domains and data types for desktop applications. It can deny every other SELinux type direct access to selected data directories.</p>
+    <p>Policy changes are performed by a small, separately installed privileged helper after Polkit authentication.</p>
+  </description>
+  <launchable type="desktop-id">me.nexryai.microvisor.desktop</launchable>
+  <url type="homepage">https://github.com/nexryai/microvisor</url>
+  <url type="bugtracker">https://github.com/nexryai/microvisor/issues</url>
+  <provides>
+    <binary>microvisor</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-07-29">
+      <description><p>Initial development release.</p></description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

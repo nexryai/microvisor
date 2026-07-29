@@ -1,0 +1,45 @@
+[package]
+name = "microvisor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A GNOME application for protecting per-application data with SELinux"
+license = "MIT"
+repository = "https://github.com/nexryai/microvisor"
+default-run = "microvisor"
+
+[features]
+default = ["gui"]
+gui = [
+  "dep:async-channel",
+  "dep:gio",
+  "dep:glib",
+  "dep:gtk",
+  "dep:adw",
+]
+
+[dependencies]
+anyhow = "1.0"
+async-channel = { version = "2.5", optional = true }
+directories = "6.0"
+gio = { version = "0.22", optional = true }
+glib = { version = "0.22", optional = true }
+gtk = { package = "gtk4", version = "0.11", features = ["v4_18"], optional = true }
+adw = { package = "libadwaita", version = "0.9.2", features = ["v1_8"], optional = true }
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.20"
+uuid = { version = "1.18", features = ["serde", "v4"] }
+
+[build-dependencies]
+glib-build-tools = "0.22"
+
+[[bin]]
+name = "microvisor"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "microvisor-helper"
+path = "src/bin/microvisor-helper.rs"

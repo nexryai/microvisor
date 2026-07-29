@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Microvisor</vendor>
+  <vendor_url>https://github.com/nexryai/microvisor</vendor_url>
+  <action id="me.nexryai.microvisor.manage">
+    <description>Install or remove Microvisor SELinux policy</description>
+    <message>Authentication is required to change SELinux application protection</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">@LIBEXECDIR@/microvisor-helper</annotate>
+  </action>
+</policyconfig>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/me/nexryai/microvisor">
+    <file alias="icons/hicolor/scalable/apps/me.nexryai.microvisor.svg">icons/hicolor/scalable/apps/me.nexryai.microvisor.svg</file>
+    <file alias="icons/hicolor/symbolic/apps/me.nexryai.microvisor-symbolic.svg">icons/hicolor/symbolic/apps/me.nexryai.microvisor-symbolic.svg</file>
+  </gresource>
+</gresources>

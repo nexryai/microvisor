@@ -1,0 +1,8 @@
+/target/
+/build/
+/*.src.rpm
+/*.tar.xz
+/*.rpm
+*.swp
+*.tmp
+.DS_Store

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <title>Microvisor</title>
+  <desc>A monochrome shield with a data aperture.</desc>
+  <!-- Solid silhouette and a two-pixel aperture remain clear at the nominal 16 px size. -->
+  <path fill-rule="evenodd" d="M8 1c2 1 4 2 6 2v5c0 3-2 6-6 8-4-2-6-5-6-8V3c2 0 4-1 6-2ZM5 6h6v2H5Z"/>
+</svg>

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          dnf install -y \
+            cargo rust rustfmt clippy meson ninja-build \
+            gtk4-devel libadwaita-devel glib2-devel \
+            libappstream-glib libxml2 policycoreutils-devel
+      - name: Format
+        run: cargo fmt --check
+      - name: Test policy generator
+        run: cargo test --no-default-features
+      - name: Check GUI
+        run: cargo check --all-targets
+      - name: Validate metadata
+        run: appstream-util validate-relax data/me.nexryai.microvisor.metainfo.xml.in
