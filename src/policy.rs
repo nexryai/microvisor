@@ -2,10 +2,14 @@ use crate::model::ProtectionProfile;
 use anyhow::{Context, Result, bail};
 use std::path::{Component, Path};
 
+// Cover every SELinux filesystem object class. Fedora's unconfined policy grants access through
+// broad file-type attributes, so omitting even device-node classes leaves a residual allow rule.
 const TYPE_PERMISSIONS: &[(&str, &str)] = &[
     ("dir", "all"),
     ("file", "all"),
     ("lnk_file", "all"),
+    ("chr_file", "all"),
+    ("blk_file", "all"),
     ("sock_file", "all"),
     ("fifo_file", "all"),
 ];

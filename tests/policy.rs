@@ -30,6 +30,14 @@ fn generated_policy_has_allowlist_and_deny_complement() {
         "(deny {} {} (file (all)))",
         ids.denied_attribute, ids.data_type
     )));
+    assert!(cil.contains(&format!(
+        "(deny {} {} (chr_file (all)))",
+        ids.denied_attribute, ids.data_type
+    )));
+    assert!(cil.contains(&format!(
+        "(deny {} {} (blk_file (all)))",
+        ids.denied_attribute, ids.data_type
+    )));
     assert!(cil.contains("(process (ptrace))"));
 }
 

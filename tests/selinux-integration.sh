@@ -132,9 +132,13 @@ module_present "$deny_module"
 fcontext_present "$executable_regex"
 fcontext_present "$data_regex"
 
-# The deny complement must remove any unconfined_t allow path to the protected type.
-if sesearch -A -s unconfined_t -t "$data_type" | grep -q '^allow '; then
+# The deny complement must remove allow rules for every filesystem object class, including device
+# nodes covered by the base policy's file-type attributes.
+unconfined_rules="$request_directory/unconfined-data.rules"
+sesearch -A -s unconfined_t -t "$data_type" >"$unconfined_rules"
+if grep -q '^allow ' "$unconfined_rules"; then
   echo "unconfined_t unexpectedly retains access to $data_type" >&2
+  cat "$unconfined_rules" >&2
   exit 1
 fi
 sesearch -A -s "$app_type" -t "$data_type" | grep -q '^allow '
