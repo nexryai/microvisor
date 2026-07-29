@@ -58,6 +58,17 @@ jobs:
           path: ~/.cache/microvisor/${{ env.FEDORA_IMAGE_NAME }}
           key: fedora-cloud-${{ env.FEDORA_IMAGE_SHA256 }}
 
+      - name: Build Fedora VM test driver
+        run: |
+          rustc --version
+          rustc --edition=2024 -D warnings --test \
+            .github/scripts/run-fedora-selinux-vm.rs \
+            -o "${{ runner.temp }}/run-fedora-selinux-vm-tests"
+          "${{ runner.temp }}/run-fedora-selinux-vm-tests"
+          rustc --edition=2024 -D warnings \
+            .github/scripts/run-fedora-selinux-vm.rs \
+            -o "${{ runner.temp }}/run-fedora-selinux-vm"
+
       - name: Install QEMU and cloud-init tools
         run: |
           sudo apt-get update
@@ -67,7 +78,7 @@ jobs:
             qemu-utils
 
       - name: Test in an SELinux Enforcing Fedora VM
-        run: bash .github/scripts/run-fedora-selinux-vm.sh
+        run: "${{ runner.temp }}/run-fedora-selinux-vm"
         env:
           INTEGRATION_HELPER_PATH: >-
             ${{ runner.temp }}/microvisor-helper-fedora-44/microvisor-helper
