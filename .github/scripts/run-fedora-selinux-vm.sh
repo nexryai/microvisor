@@ -58,6 +58,9 @@ if [[ ! -f "$image_path" ]] || ! verify_image; then
   mv "$download_path" "$image_path"
 fi
 verify_image
+echo "Fedora image: $FEDORA_IMAGE_NAME"
+echo "Fedora image SHA-256: $FEDORA_IMAGE_SHA256"
+qemu-system-x86_64 --version | head -n 1
 
 ssh-keygen -q -t ed25519 -N "" -f "$ssh_key"
 public_key=$(<"$ssh_key.pub")
@@ -208,6 +211,8 @@ ssh "${ssh_options[@]}" runner@127.0.0.1 \
    echo \"Fedora: \$(cat /etc/fedora-release)\"
    echo \"Kernel: \$(uname -r)\"
    echo \"SELinux userspace: \$(semodule --version 2>&1)\"
+   echo \"SELinux policy packages:\"
+   rpm -q selinux-policy selinux-policy-targeted
    echo \"SELinux context: \$(id -Z)\"
    sestatus
    cd /home/runner/microvisor
