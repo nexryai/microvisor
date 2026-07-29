@@ -25,7 +25,7 @@ exec_type="${module}_exec_t"
 data_type="${module}_data_t"
 
 test_root="/var/lib/microvisor-ci/$profile_id"
-executable="$test_root/bin/microvisor-ci-cat"
+executable="$test_root/bin/microvisor-ci-bash"
 data_directory="$test_root/data"
 secret_file="$data_directory/secret.txt"
 state_file="/var/lib/microvisor/profiles/$profile_id.json"
@@ -90,7 +90,7 @@ trap cleanup EXIT
 
 mkdir -p "$test_root/bin" "$data_directory"
 created_test_root=true
-cp /usr/bin/cat "$executable"
+cp /usr/bin/bash "$executable"
 chmod 0755 "$executable"
 printf '%s\n' "microvisor-ci-secret" >"$secret_file"
 restorecon -RF "$test_root"
@@ -126,7 +126,6 @@ grep -Fq '"ok":true' "$apply_response"
 module_present "$module"
 module_present "$deny_module"
 [[ $(selinux_type "$executable") == "$exec_type" ]]
-[[ $(selinux_type "$secret_file") == "$data_type" ]]
 [[ -f "$state_file" ]]
 [[ $(stat -c %a /var/lib/microvisor/profiles) == 700 ]]
 [[ $(stat -c %a "$state_file") == 600 ]]
@@ -146,9 +145,13 @@ if /usr/bin/cat "$secret_file" >/dev/null 2>"$request_directory/direct-access.er
   exit 1
 fi
 
-# Executing the labeled entrypoint transitions to the protected application type, which may read
-# the same file. Successful output therefore checks both the transition and the intended access.
-[[ $("$executable" "$secret_file") == microvisor-ci-secret ]]
+# Executing the labeled entrypoint transitions to the protected application type. Check the actual
+# xattr and file contents from that domain because unconfined_t cannot even stat the protected file.
+protected_type=$(
+  "$executable" -c 'stat -c %C "$1" | cut -d: -f3' -- "$secret_file"
+)
+[[ "$protected_type" == "$data_type" ]]
+[[ $("$executable" -c 'cat "$1"' -- "$secret_file") == microvisor-ci-secret ]]
 
 "$helper_path" <"$remove_request" >"$remove_response"
 grep -Fq '"ok":true' "$remove_response"
