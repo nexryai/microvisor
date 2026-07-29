@@ -210,7 +210,7 @@ ssh "${ssh_options[@]}" runner@127.0.0.1 \
   "set -euo pipefail
    echo \"Fedora: \$(cat /etc/fedora-release)\"
    echo \"Kernel: \$(uname -r)\"
-   echo \"SELinux userspace: \$(semodule --version 2>&1)\"
+   echo \"SELinux userspace: \$(rpm -q --qf '%{VERSION}\n' libsepol)\"
    echo \"SELinux policy packages:\"
    rpm -q selinux-policy selinux-policy-targeted
    echo \"SELinux context: \$(id -Z)\"

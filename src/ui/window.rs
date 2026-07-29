@@ -380,8 +380,8 @@ fn present_system_status(parent: &adw::ApplicationWindow) {
         format_args!("collecting system status information"),
     );
     let enforcement = command_output("getenforce", &[]).unwrap_or_else(|| "Unavailable".into());
-    let semodule =
-        command_output("semodule", &["--version"]).unwrap_or_else(|| "Unavailable".into());
+    let selinux_userspace = command_output("rpm", &["-q", "--qf", "%{VERSION}", "libsepol"])
+        .unwrap_or_else(|| "Unavailable".into());
     let helper = if Path::new("/usr/libexec/microvisor-helper").is_file() {
         "Installed"
     } else {
@@ -395,7 +395,7 @@ fn present_system_status(parent: &adw::ApplicationWindow) {
 
     let body = format!(
         "Enforcement: {enforcement}\n\
-         SELinux userspace: {semodule}\n\
+         SELinux userspace: {selinux_userspace}\n\
          Privileged helper: {helper}\n\
          Policy development files: {policy_devel}\n\n\
          Microvisor requires SELinux userspace 3.6 or newer for CIL deny rules."

@@ -148,7 +148,14 @@ fn acquire_transaction_lock() -> Result<File> {
 
 fn ensure_environment() -> Result<()> {
     diagnostics::debug("helper", format_args!("checking the SELinux environment"));
-    for command in ["getenforce", "make", "restorecon", "semanage", "semodule"] {
+    for command in [
+        "getenforce",
+        "make",
+        "restorecon",
+        "rpm",
+        "semanage",
+        "semodule",
+    ] {
         find_command(command)
             .with_context(|| format!("Required command '{command}' is not installed"))?;
     }
@@ -175,8 +182,10 @@ fn ensure_environment() -> Result<()> {
 }
 
 fn ensure_selinux_userspace_version() -> Result<()> {
-    let mut command = trusted_command("semodule")?;
-    let output = checked(command.arg("--version"))?;
+    // semodule has no version option on Fedora. Query libsepol because it implements the CIL
+    // parser, including the deny syntax that must be available before any policy mutation.
+    let mut command = trusted_command("rpm")?;
+    let output = checked(command.args(["-q", "--qf", "%{VERSION}\n", "libsepol"]))?;
     let text = format!(
         "{} {}",
         String::from_utf8_lossy(&output.stdout),
@@ -750,4 +759,22 @@ fn find_command(command: &str) -> Result<PathBuf> {
         }
     }
     bail!("Command not found")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_major_minor;
+
+    #[test]
+    fn parses_fedora_libsepol_versions() {
+        assert_eq!(parse_major_minor("3.6"), Some((3, 6)));
+        assert_eq!(parse_major_minor("3.10"), Some((3, 10)));
+        assert_eq!(parse_major_minor("3.10.1"), Some((3, 10)));
+    }
+
+    #[test]
+    fn rejects_non_version_tokens() {
+        assert_eq!(parse_major_minor("libsepol"), None);
+        assert_eq!(parse_major_minor("3"), None);
+    }
 }
