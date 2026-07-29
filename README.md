@@ -77,6 +77,23 @@ The RPM intentionally depends on Polkit and Fedora's SELinux policy-development 
 the helper compiles and installs profiles on the target system. Copr publication does not replace
 the SELinux Enforcing integration tests described in `AGENTS.md`.
 
+## Continuous integration
+
+GitHub Actions runs the fast build and unit checks in a Fedora 44 container. A separate
+`ubuntu-24.04` GitHub-hosted job boots the official Fedora 44 Cloud image under QEMU and verifies
+that the guest is in SELinux Enforcing mode before running the privileged integration test.
+
+The Cloud image filename and SHA-256 checksum are pinned in `.github/workflows/ci.yml`. The image
+is cached only after the host script verifies that checksum. QEMU uses KVM if `/dev/kvm` is
+available on the hosted runner and otherwise falls back to TCG software emulation.
+
+The guest test invokes the Fedora-built helper through its JSON protocol and covers module
+installation, real file labels, process-domain transition, denial from `unconfined_t`, root-side
+state permissions, and complete removal and relabeling. It uses a disposable test profile and
+removes the deny module first during failure recovery. This headless job does not cover the GTK UI,
+interactive Polkit authentication, GNOME Wayland integration, or the full application matrix in
+`PLANS.md`.
+
 ## Diagnostics
 
 Microvisor writes structured, single-line diagnostic messages to standard error. Logs identify

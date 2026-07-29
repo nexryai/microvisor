@@ -14,6 +14,10 @@ This file defines the working contract for coding agents contributing to Microvi
 - `src/bin/microvisor-helper.rs`: Polkit-invoked root helper.
 - `data/icons/`: full-color and symbolic GNOME app icons.
 - `tests/policy.rs`: deterministic policy-generator tests.
+- `tests/selinux-integration.sh`: destructive helper integration test for a disposable SELinux
+  Enforcing Fedora VM.
+- `.github/scripts/run-fedora-selinux-vm.sh`: QEMU lifecycle and guest provisioning for CI.
+- `.github/workflows/ci.yml`: Fedora build checks and the GitHub-hosted QEMU integration job.
 - `PLANS.md`: roadmap and design decisions that are not yet implemented.
 
 ## Non-negotiable security boundaries

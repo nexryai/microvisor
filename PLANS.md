@@ -22,6 +22,8 @@ Implemented in this repository:
 - Apply, update with rollback attempt, remove, and label restoration flows.
 - Optional ptrace and foreign-FD restrictions.
 - Basic unit tests for policy output and path validation.
+- GitHub Actions integration test that boots a pinned Fedora 44 Cloud image under QEMU, confirms
+  SELinux Enforcing mode, and exercises apply, denial, domain transition, and removal.
 - `AGENTS.md` contributor contract and CI outline.
 
 The MVP is intentionally Fedora-first and should be treated as experimental until the integration test matrix below is completed.
@@ -31,6 +33,7 @@ The MVP is intentionally Fedora-first and should be treated as experimental unti
 Priority: highest.
 
 - [ ] Compile and run the project on Fedora 44 with SELinux Enforcing.
+- [x] Add a QEMU-based Fedora 44 Enforcing integration harness to GitHub Actions.
 - [ ] Confirm the generated CIL complement syntax against SELinux userspace 3.6, 3.8, 3.9, and 3.10.
 - [ ] Verify that `unconfined_domain()` plus the deny module produces the intended final allow graph using `sesearch`.
 - [x] Detect the minimum SELinux userspace version before changing labels.
