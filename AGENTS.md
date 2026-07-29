@@ -94,6 +94,11 @@ Record the exact Fedora version, SELinux userspace version, base policy version,
 - Avoid blocking the GTK main loop. Privileged calls run on a worker thread and return through an async channel.
 - Do not add a new dependency for functionality available in the standard library or gtk-rs without justification.
 - Public structures serialized across the privilege boundary require backward-compatibility consideration.
+- Write code comments in English.
+- Comment the reason, invariant, or security consequence at privilege boundaries, policy-ordering
+  constraints, recovery paths, unsafe code, and non-obvious asynchronous ownership boundaries.
+  Keep those comments synchronized with the implementation.
+- Do not add comments that merely restate straightforward code.
 
 ## Change protocol for agents
 
@@ -102,12 +107,18 @@ Before editing:
 1. Read `README.md`, this file, and the relevant section of `PLANS.md`.
 2. Identify whether the change touches the GUI, the privilege boundary, policy semantics, installation, or recovery.
 3. For policy changes, write or update a deterministic test first.
+4. Inspect the Git worktree and keep pre-existing user changes out of agent-created commits.
 
 While editing:
 
 1. Keep the patch scoped to one objective.
 2. Update documentation when assumptions or supported versions change.
 3. Do not silently alter defaults that affect policy strength.
+4. At suitable checkpoints, run the focused checks for the completed unit, inspect the staged diff,
+   and commit it with `git commit -m "<imperative summary>"`.
+5. Commit frequently enough that each validated behavioral or documentation unit is independently
+   reviewable and reversible. Do not mix unrelated changes or knowingly failing work into a commit.
+6. Do not amend, squash, or rewrite existing commits unless the user explicitly requests it.
 
 After editing:
 
