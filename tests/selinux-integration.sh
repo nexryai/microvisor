@@ -132,16 +132,26 @@ module_present "$deny_module"
 fcontext_present "$executable_regex"
 fcontext_present "$data_regex"
 
-# The deny complement must remove allow rules for every filesystem object class, including device
-# nodes covered by the base policy's file-type attributes.
-unconfined_rules="$request_directory/unconfined-data.rules"
-sesearch -A -s unconfined_t -t "$data_type" >"$unconfined_rules"
-if grep -q '^allow ' "$unconfined_rules"; then
-  echo "unconfined_t unexpectedly retains access to $data_type" >&2
-  cat "$unconfined_rules" >&2
+# The deny complement must remove allow rules for every filesystem object class. Other classes
+# can legitimately target a file type without granting access to the protected filesystem object.
+filesystem_classes=(dir file lnk_file chr_file blk_file sock_file fifo_file)
+for object_class in "${filesystem_classes[@]}"; do
+  unconfined_rules="$request_directory/unconfined-${object_class}.rules"
+  sesearch -A -s unconfined_t -t "$data_type" -c "$object_class" >"$unconfined_rules"
+  if grep -q '^allow ' "$unconfined_rules"; then
+    echo "unconfined_t unexpectedly retains $object_class access to $data_type" >&2
+    cat "$unconfined_rules" >&2
+    exit 1
+  fi
+done
+
+app_read_rules="$request_directory/app-data-file-read.rules"
+sesearch -A -s "$app_type" -t "$data_type" -c file -p read >"$app_read_rules"
+if ! grep -q '^allow ' "$app_read_rules"; then
+  echo "$app_type unexpectedly lacks file read access to $data_type" >&2
+  cat "$app_read_rules" >&2
   exit 1
 fi
-sesearch -A -s "$app_type" -t "$data_type" | grep -q '^allow '
 
 # This shell remains unconfined_t and must be denied despite running as root.
 if /usr/bin/cat "$secret_file" >/dev/null 2>"$request_directory/direct-access.err"; then
