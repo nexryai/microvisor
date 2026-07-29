@@ -263,6 +263,8 @@ pub fn present(
                 return;
             }
 
+            // Persist an unapplied draft before authentication. If pkexec is cancelled or the
+            // helper fails, the previous local entry is restored below.
             let mut pending = candidate.clone();
             pending.applied = false;
             if let Err(error) = upsert_profile(pending) {
@@ -284,6 +286,8 @@ pub fn present(
                 profile: candidate.clone(),
             };
             let (sender, receiver) = async_channel::bounded(1);
+            // pkexec and SELinux tooling may wait for authentication or disk I/O. Keep all of it
+            // off the GTK main thread and return exactly one result through the bounded channel.
             thread::spawn(move || {
                 diagnostics::debug(
                     "ui.profile-dialog",
@@ -441,6 +445,8 @@ pub fn present(
                 confirmation.set_response_enabled("remove", false);
                 let request = HelperRequest::Remove { id: original_id };
                 let (sender, receiver) = async_channel::bounded(1);
+                // Removal is privileged and potentially slow for recursive relabeling, so it uses
+                // the same worker-thread boundary as apply.
                 thread::spawn(move || {
                     diagnostics::debug(
                         "ui.profile-dialog",

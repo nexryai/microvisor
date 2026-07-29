@@ -31,6 +31,8 @@ impl ProtectionProfile {
     }
 
     pub fn identifiers(&self) -> PolicyIdentifiers {
+        // Derive every policy identifier from the UUID, never from user-provided text. This keeps
+        // generated identifiers valid and prevents profile names from becoming policy syntax.
         let compact = self.id.simple().to_string();
         let module = format!("microvisor_{compact}");
 
@@ -65,6 +67,8 @@ pub struct PolicyIdentifiers {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
+// This enum is the complete GUI-to-root protocol. Keep it narrow and consider backward
+// compatibility before changing any serialized field or variant.
 pub enum HelperRequest {
     Apply { profile: ProtectionProfile },
     Remove { id: Uuid },

@@ -41,6 +41,8 @@ pub fn save_profiles(profiles: &[ProtectionProfile]) -> Result<()> {
 
     let data = serde_json::to_vec_pretty(profiles)?;
     let temporary = path.with_extension("json.tmp");
+    // Replace the complete store atomically so an interrupted GUI write cannot leave truncated
+    // JSON. This user-owned copy is only UI state; privileged recovery trusts the root-owned copy.
     fs::write(&temporary, data)
         .with_context(|| format!("Could not write {}", temporary.display()))?;
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))

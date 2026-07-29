@@ -20,6 +20,8 @@ pub fn invoke(request: &HelperRequest) -> Result<HelperResponse> {
         format_args!("using privileged helper {helper}"),
     );
 
+    // Send the typed request over stdin and pass no profile values as command-line arguments.
+    // This preserves the narrow Polkit entry point and avoids shell interpretation entirely.
     let mut child = Command::new("/usr/bin/pkexec")
         .arg(helper)
         .stdin(Stdio::piped())
@@ -56,6 +58,8 @@ pub fn invoke(request: &HelperRequest) -> Result<HelperResponse> {
     for line in helper_diagnostics.lines().filter(|line| !line.is_empty()) {
         diagnostics::debug("helper-client.child", format_args!("{line}"));
     }
+    // Standard output is reserved for the machine-readable response. The helper writes
+    // diagnostics to standard error so logging can never corrupt the protocol payload.
     if let Ok(response) = serde_json::from_slice::<HelperResponse>(&output.stdout) {
         diagnostics::info(
             "helper-client",

@@ -39,6 +39,7 @@ fn main() {
         }
     };
 
+    // Keep stdout exclusively for the serialized protocol response. All diagnostics use stderr.
     match serde_json::to_string(&response) {
         Ok(json) => println!("{json}"),
         Err(error) => {
@@ -56,6 +57,8 @@ fn main() {
 }
 
 fn run() -> Result<String> {
+    // geteuid is the only unsafe call needed here; checking it before parsing input ensures this
+    // binary cannot silently perform a partial unprivileged transaction.
     if unsafe { libc::geteuid() } != 0 {
         diagnostics::warn(
             "helper",
@@ -64,10 +67,13 @@ fn run() -> Result<String> {
         bail!("microvisor-helper must run as root through pkexec");
     }
     diagnostics::debug("helper", format_args!("effective UID check passed"));
+    // The File guard holds the exclusive lock for the complete request, including rollback.
     let _transaction_lock = acquire_transaction_lock()?;
     ensure_environment()?;
 
     let mut input = Vec::new();
+    // Read one byte beyond the limit so an oversized request is detected without buffering
+    // attacker-controlled input indefinitely in the root process.
     io::stdin()
         .take((MAX_REQUEST_SIZE + 1) as u64)
         .read_to_end(&mut input)?;
@@ -97,6 +103,8 @@ fn run() -> Result<String> {
         }
         HelperRequest::Remove { id } => {
             diagnostics::info("helper", format_args!("processing remove for profile {id}"));
+            // Removal trusts only the root-owned profile snapshot. The user's configuration may
+            // have changed since the policy and file-context rules were installed.
             match load_state_optional(id)? {
                 Some(profile) => {
                     teardown(&profile)?;
@@ -127,6 +135,8 @@ fn acquire_transaction_lock() -> Result<File> {
         .open(LOCK_FILE)
         .context("Could not open the Microvisor transaction lock")?;
     fs::set_permissions(LOCK_FILE, fs::Permissions::from_mode(0o600))?;
+    // flock serializes module, fcontext, relabel, state-save, and rollback operations across every
+    // helper process. Releasing the File at function exit releases the lock.
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
     if result != 0 {
         return Err(io::Error::last_os_error())
@@ -205,6 +215,8 @@ fn apply_transaction(input: &ProtectionProfile) -> Result<()> {
         format_args!("normalizing profile {}", input.id),
     );
     let profile = normalize_profile(input.clone())?;
+    // The root-side snapshot is the rollback source. Never reconstruct the previous transaction
+    // from mutable user configuration.
     let previous = load_state_optional(profile.id)?;
 
     if let Some(old) = &previous {
@@ -289,6 +301,8 @@ fn apply_transaction(input: &ProtectionProfile) -> Result<()> {
 fn normalize_profile(mut profile: ProtectionProfile) -> Result<ProtectionProfile> {
     policy::validate_profile(&profile)?;
 
+    // Resolve symlinks before overlap checks and before generating file-context expressions.
+    // All later commands receive these canonical paths as individual argv entries.
     let executable = fs::canonicalize(&profile.executable)
         .with_context(|| format!("Could not resolve {}", profile.executable.display()))?;
     if !executable.is_file() {
@@ -485,6 +499,8 @@ fn apply(profile: &ProtectionProfile) -> Result<()> {
         format_args!("compiled module {}", ids.module),
     );
 
+    // Install the base types before assigning them to files. The deny module is deliberately
+    // installed only after every requested path has been relabeled successfully.
     let mut semodule = trusted_command("semodule")?;
     checked(
         semodule
@@ -522,6 +538,8 @@ fn apply(profile: &ProtectionProfile) -> Result<()> {
         );
     }
 
+    // This must remain the final mutation: installing the deny complement earlier could block
+    // recovery while only part of the selected data has its new label.
     let cil_path = work.path().join(format!("{}.cil", ids.deny_module));
     fs::write(&cil_path, policy::render_deny_cil(profile)?)?;
     let mut semodule = trusted_command("semodule")?;
@@ -542,6 +560,7 @@ fn teardown(profile: &ProtectionProfile) -> Result<()> {
         "helper.teardown",
         format_args!("tearing down profile {}", profile.id),
     );
+    // Remove the deny complement first so recovery and relabeling are not themselves denied.
     remove_module_if_present(&ids.deny_module)?;
     diagnostics::debug(
         "helper.teardown",
@@ -633,6 +652,8 @@ fn save_state(profile: &ProtectionProfile) -> Result<()> {
     );
     let path = state_path(profile.id);
     let temporary = path.with_extension("json.tmp");
+    // Write, secure, and atomically rename the snapshot only after policy application succeeds.
+    // A future removal or rollback must never trust a partially written root-side profile.
     fs::write(&temporary, serde_json::to_vec_pretty(profile)?)?;
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
     fs::rename(temporary, path)?;
@@ -700,6 +721,8 @@ fn checked(command: &mut Command) -> Result<Output> {
 }
 
 fn trusted_command(command: &str) -> Result<Command> {
+    // Resolve the executable from root-owned system directories and discard the caller's
+    // environment. Profile values are appended later as argv entries, never as shell text.
     let mut process = Command::new(find_command(command)?);
     process.env_clear().envs([
         ("HOME", "/root"),
