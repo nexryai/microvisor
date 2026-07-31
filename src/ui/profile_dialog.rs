@@ -252,12 +252,13 @@ pub fn present(
                     candidate.data_directories.len()
                 ),
             );
-            if let Err(error) = validate_local_paths(&candidate)
-                .and_then(|_| policy::validate_profile(&candidate))
-            {
+            // Filesystem metadata may be unreadable to the unprivileged desktop process even
+            // when the selected path exists. The helper performs the authoritative existence,
+            // object-type, and executable checks before changing any SELinux state.
+            if let Err(error) = policy::validate_profile(&candidate) {
                 diagnostics::warn(
                     "ui.profile-dialog",
-                    format_args!("local profile validation failed: {error:#}"),
+                    format_args!("profile validation failed: {error:#}"),
                 );
                 show_error(&dialog, "Cannot Apply Protection", &error.to_string());
                 return;
@@ -743,18 +744,6 @@ fn refresh_directories(list: &gtk::ListBox, directories: &Rc<RefCell<Vec<PathBuf
             refresh_directories(&list, &directories);
         });
     }
-}
-
-fn validate_local_paths(profile: &ProtectionProfile) -> Result<()> {
-    if !profile.executable.is_file() {
-        anyhow::bail!("The selected executable does not exist or is not a regular file");
-    }
-    for directory in &profile.data_directories {
-        if !directory.is_dir() {
-            anyhow::bail!("{} is not an existing directory", directory.display());
-        }
-    }
-    Ok(())
 }
 
 fn restore_local_after_failed_apply(
