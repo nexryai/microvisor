@@ -52,50 +52,6 @@ Run:
 microvisor
 ```
 
-## Fedora Copr packaging
-
-The repository contains `microvisor.spec` and `.copr/Makefile` for building a native RPM from
-Copr's SCM source type. The RPM contains both the unprivileged GUI and the Polkit-authenticated
-helper. Rust dependencies are vendored from the locked dependency graph while creating the source
-RPM; the architecture-specific RPM build then runs without network access.
-
-Create a Copr project with the Fedora 44 chroots you intend to support, then add an SCM package with:
-
-- Clone URL: `https://github.com/nexryai/microvisor.git`
-- Committish: the release tag or branch to publish
-- Spec file: `microvisor.spec`
-- Build method: `make srpm`
-
-After a successful build, users can install it with:
-
-```bash
-sudo dnf copr enable <owner>/microvisor
-sudo dnf install microvisor
-```
-
-The RPM intentionally depends on Polkit and Fedora's SELinux policy-development utilities because
-the helper compiles and installs profiles on the target system. Copr publication does not replace
-the SELinux Enforcing integration tests described in `AGENTS.md`.
-
-## Continuous integration
-
-GitHub Actions runs the fast build and unit checks from `.github/workflows/ci.yml` in a Fedora 44
-container. The separate `.github/workflows/selinux-integration.yml` workflow uses an
-`ubuntu-24.04` GitHub-hosted job to boot the official Fedora 44 Cloud image under QEMU and verifies
-that the guest is in SELinux Enforcing mode before running the privileged integration test.
-
-The Cloud image filename and SHA-256 checksum are pinned in
-`.github/workflows/selinux-integration.yml`. The image is cached only after the host script
-verifies that checksum. QEMU uses KVM if `/dev/kvm` is available on the hosted runner and
-otherwise falls back to TCG software emulation.
-
-The guest test invokes the Fedora-built helper through its JSON protocol and covers module
-installation, real file labels, process-domain transition, denial from `unconfined_t`, root-side
-state permissions, and complete removal and relabeling. It uses a disposable test profile and
-removes the deny module first during failure recovery. This headless job does not cover the GTK UI,
-interactive Polkit authentication, GNOME Wayland integration, or the full application matrix in
-`PLANS.md`.
-
 ## Diagnostics
 
 Microvisor writes structured, single-line diagnostic messages to standard error. Logs identify
@@ -175,6 +131,3 @@ Then remove the profile-specific deny module first, restore labels, and remove t
 
 Do not remove a base module while files still carry its custom types. Microvisor currently rejects matching pre-existing local `semanage fcontext` entries rather than overwriting or preserving them.
 
-## License
-
-MIT.
