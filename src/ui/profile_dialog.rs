@@ -600,11 +600,17 @@ fn build_profile_dialog() -> ProfileDialogWidgets {
         .title("Add Directory")
         .start_icon_name("list-add-symbolic")
         .build();
+    let add_directory_list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .activate_on_single_click(true)
+        .css_classes(["boxed-list"])
+        .build();
+    add_directory_list.append(&add_directory_row);
     let directories_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
         .build();
-    directories_box.append(&add_directory_row);
+    directories_box.append(&add_directory_list);
     directories_box.append(&directories_list);
     let directories_group = adw::PreferencesGroup::builder()
         .title("Protected Directories")
