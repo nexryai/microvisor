@@ -600,14 +600,19 @@ fn build_profile_dialog() -> ProfileDialogWidgets {
         .title("Add Directory")
         .start_icon_name("list-add-symbolic")
         .build();
+    let directories_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .build();
+    directories_box.append(&add_directory_row);
+    directories_box.append(&directories_list);
     let directories_group = adw::PreferencesGroup::builder()
         .title("Protected Directories")
         .description(
             "All files below these directories receive a profile-specific SELinux data type.",
         )
         .build();
-    directories_group.add(&directories_list);
-    directories_group.add(&add_directory_row);
+    directories_group.add(&directories_box);
 
     let launch_domain_row = adw::EntryRow::builder()
         .title("Launch Domain")
@@ -634,15 +639,12 @@ fn build_profile_dialog() -> ProfileDialogWidgets {
         .title("Preview Policy")
         .start_icon_name("text-x-generic-symbolic")
         .build();
-    let domain_group = adw::PreferencesGroup::builder()
-        .title("SELinux Domain")
-        .description("The defaults match a typical Fedora Workstation session using unconfined_u.")
+    let protection_group = adw::PreferencesGroup::builder()
+        .title("Protection Options")
         .build();
-    domain_group.add(&launch_domain_row);
-    domain_group.add(&launch_role_row);
-    domain_group.add(&block_ptrace_row);
-    domain_group.add(&block_fd_use_row);
-    domain_group.add(&preview_policy_row);
+    protection_group.add(&block_ptrace_row);
+    protection_group.add(&block_fd_use_row);
+    protection_group.add(&preview_policy_row);
 
     let remove_protection_row = adw::ButtonRow::builder()
         .title("Remove Protection")
@@ -652,11 +654,22 @@ fn build_profile_dialog() -> ProfileDialogWidgets {
     let remove_group = adw::PreferencesGroup::builder().title("Remove").build();
     remove_group.add(&remove_protection_row);
 
+    let advanced_group = adw::PreferencesGroup::builder()
+        .title("Advanced")
+        .description(
+            "Configure the SELinux domain and role that launch the protected application. The \
+             defaults match a typical Fedora Workstation session using unconfined_u.",
+        )
+        .build();
+    advanced_group.add(&launch_domain_row);
+    advanced_group.add(&launch_role_row);
+
     let page = adw::PreferencesPage::new();
     page.add(&application_group);
     page.add(&directories_group);
-    page.add(&domain_group);
+    page.add(&protection_group);
     page.add(&remove_group);
+    page.add(&advanced_group);
 
     let scrolled = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
