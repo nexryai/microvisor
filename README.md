@@ -112,7 +112,7 @@ Microvisor is intended to block **direct SELinux-mediated access** from unrelate
 - data intentionally exported by the protected application;
 - all same-user confused-deputy attacks.
 
-Any process allowed to execute the protected entrypoint from the configured launch domain can cause the domain transition. A stronger future design may require a dedicated broker or a separate UNIX account. See `PLANS.md`.
+Any process allowed to execute the protected entrypoint from the configured launch domain can cause the domain transition. A stronger future design may require a dedicated broker or a separate UNIX account.
 
 ## Recovery
 
