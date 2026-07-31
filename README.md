@@ -117,13 +117,18 @@ journalctl --user --since today | grep microvisor
 Diagnostics from the privileged helper are captured by the GUI process and relayed into the same
 log stream. The helper keeps its JSON protocol response on standard output.
 
-For a developer build without installation, the GUI can point to a manually installed helper:
+When running a debug build, the GUI automatically prefers an executable `microvisor-helper`
+located beside the running `microvisor` binary. This works with the colocated outputs from both
+Cargo and a debug Meson build. `MICROVISOR_HELPER` takes precedence when an explicit path is
+needed:
 
 ```bash
 MICROVISOR_HELPER=/absolute/path/to/microvisor-helper cargo run --bin microvisor
 ```
 
-`pkexec` normally requires the helper path to match the path declared in the installed Polkit action, so installing into a test prefix or virtual machine is recommended.
+Release builds continue to use `/usr/libexec/microvisor-helper` by default. `pkexec` normally
+requires the helper path to match the path declared in the installed Polkit action, so installing
+into a test prefix or virtual machine is recommended for realistic authorization testing.
 
 ## Chrome example
 
