@@ -2,112 +2,192 @@
 
 ## Product objective
 
-Microvisor should let a desktop user select an application and sensitive data directories, inspect the generated SELinux policy, apply it through Polkit, verify that it is active, and safely remove or recover it. The long-term goal is a usable policy-management frontend without hiding SELinux's security model or recovery requirements.
+Microvisor will be a headless, root-operated command-line tool that reconciles versioned YAML
+profiles into SELinux policy modules, file-context rules, and labels. It must work from a TTY, an
+SSH session, configuration management, or a server provisioning pipeline without GTK, Libadwaita,
+a display server, Polkit, or a separate privileged helper.
 
-## Current milestone: 0.1 MVP
+The security objective remains narrow: protect selected application data from direct
+SELinux-mediated access by every domain except the selected application domain. Root operation
+simplifies deployment but increases the impact of parser, path-validation, transaction, and command
+construction bugs. YAML is therefore an untrusted root input and not merely a convenient settings
+format.
 
-Implemented in this repository:
+## Architecture decision: headless root CLI
 
-- Rust/GTK 4/Libadwaita application shell.
-- GNOME HIG-oriented protected-application list and adaptive dialogs.
-- Code-defined `AdwShortcutsDialog` with Add, Shortcuts, and Quit actions.
-- GNOME-style full-color and symbolic SVG icons.
-- Per-profile model and user configuration storage.
-- Pure generation of a reference-policy TE module and a CIL deny module.
-- File-context preview for the executable and protected directories.
-- Polkit-authenticated helper with root-side profile state.
-- Copr-ready native RPM packaging with locked, vendored Rust dependencies.
-- Helper-side path canonicalization, broad/overlapping path rejection, command allowlisting, and collision checks.
-- SELinux userspace 3.6 minimum-version check before policy mutation.
-- Apply, update with rollback attempt, remove, and label restoration flows.
-- Optional ptrace and foreign-FD restrictions.
-- Basic unit tests for policy output and path validation.
-- GitHub Actions integration test that boots a pinned Fedora 44 Cloud image under QEMU, confirms
-  SELinux Enforcing mode, and exercises apply, denial, domain transition, and removal.
-- `AGENTS.md` contributor contract and CI outline.
+Accepted direction:
 
-The MVP is intentionally Fedora-first and should be treated as experimental until the integration test matrix below is completed.
+- One short-lived `microvisor` binary performs validation, rendering, status inspection, apply,
+  removal, rollback, and recovery.
+- Desired state is read from root-controlled files under `/etc/microvisor/profiles.d/*.yaml`.
+- Applied snapshots and transaction records remain separate under `/var/lib/microvisor/`.
+- Mutations are serialized with a lock under `/run/microvisor/`.
+- No GUI, desktop integration, Polkit action, helper protocol, daemon, or network service is part of
+  the target architecture.
+- Server support means headless execution and automated lifecycle tests on named SELinux platforms;
+  it does not mean policy portability is assumed.
 
-## Milestone 0.2: correctness and recovery
+This supersedes the 0.1 GNOME/Libadwaita and Polkit-helper design. The existing implementation is
+legacy migration input, not a second supported frontend.
+
+## Legacy implementation inventory
+
+The repository currently contains reusable policy and transaction work alongside components to be
+removed:
+
+- Reuse and harden: deterministic TE/CIL generation, path and identifier validation, root UID check,
+  transaction lock, applied-profile snapshots, apply/update rollback attempt, label restoration,
+  Enforcing-mode QEMU integration harness, and RPM groundwork.
+- Replace: per-user JSON profile storage and GUI-to-helper JSON requests with a versioned YAML
+  desired-state loader and a typed reconciliation plan.
+- Remove: GTK/Libadwaita UI, asynchronous GUI plumbing, `microvisor-helper`, Polkit policy, desktop
+  file, AppStream metadata, application icons, GUI build features, and desktop-only dependencies.
+- Rewrite: packaging, CI, diagnostics, integration tests, recovery documentation, and application
+  discovery assumptions around the single CLI.
+
+The old helper must not be deleted until the CLI transaction path has equivalent deterministic and
+VM recovery coverage. It must not receive new features during the migration.
+
+## Milestone 0.2: CLI and YAML migration
 
 Priority: highest.
 
-- [ ] Compile and run the project on Fedora 44 with SELinux Enforcing.
-- [x] Add a QEMU-based Fedora 44 Enforcing integration harness to GitHub Actions.
-- [ ] Confirm the generated CIL complement syntax against SELinux userspace 3.6, 3.8, 3.9, and 3.10.
-- [ ] Verify that `unconfined_domain()` plus the deny module produces the intended final allow graph using `sesearch`.
-- [x] Detect the minimum SELinux userspace version before changing labels.
-- [ ] Add a dry-run operation that compiles both modules without installing them.
-- [ ] Add a helper status operation that compares installed modules, local fcontext rules, and root-side profile state.
-- [ ] Detect partial installations and expose a Repair action.
-- [ ] Journal every privileged transaction to `/var/log/microvisor/transactions.jsonl` without recording sensitive file contents.
-- [ ] Add deterministic failpoints and integration tests for rollback at every apply stage.
-- [ ] Preserve and restore pre-existing local fcontext rules rather than rejecting or overwriting them.
-- [ ] Add a command-line recovery utility that does not depend on GTK.
+- [ ] Define a versioned `schema_version: 1` YAML profile with UUID, display name, executable,
+  protected directories, launch domain/role, and explicit hardening booleans.
+- [ ] Select and review a YAML parser. Demonstrate rejection of duplicate keys, aliases, tags,
+  ambiguous coercions, unknown fields, unsupported versions, excessive nesting, oversized files,
+  and excessive profile counts.
+- [ ] Load only regular root-owned configuration files that are not group- or world-writable; use
+  race-resistant no-follow opens and deterministic filename ordering.
+- [ ] Add `validate`, `render <id>`, `apply`, `status`, and `remove <id>` subcommands with stable exit
+  codes. Reserve stdout for requested output and stderr for diagnostics.
+- [ ] Separate parsing, semantic validation, full-set conflict validation, policy rendering,
+  reconciliation planning, and privileged execution.
+- [ ] Make `apply` validate all profiles and compile every generated module before the first host
+  mutation.
+- [ ] Define explicit semantics for YAML deletion: report installed-but-undesired profiles and
+  require a documented removal or prune operation rather than silently changing protection.
+- [ ] Fold the helper's allowlisted command execution, locking, state, apply, rollback, removal, and
+  recovery logic into the CLI.
+- [ ] Make apply idempotent and detect desired/applied/observed drift.
+- [ ] Atomically persist schema-versioned applied snapshots independently from YAML desired state.
+- [ ] Replace JSON helper integration tests with CLI tests covering valid and invalid YAML,
+  rendering, reconciliation, status, removal, interruption, rollback, and recovery.
+- [ ] Remove GTK, Libadwaita, GLib/GIO, async GUI, directory-discovery, JSON-protocol, and Polkit
+  dependencies that are no longer used.
+- [ ] Remove the GUI sources, helper binary, icons, resources, desktop file, AppStream metadata, and
+  Polkit action after replacement tests pass.
+- [ ] Rewrite Meson/RPM installation for a headless binary, configuration directory, manual page,
+  shell completions if generated deterministically, and root state/runtime directories.
+- [ ] Add a migration note for users of the unreleased 0.1 JSON profiles; do not auto-import mutable
+  per-user configuration as root.
 
 Exit criteria:
 
-- Applying, updating, interrupting, and removing a profile cannot leave orphaned custom labels in the tested matrix.
-- Recovery is documented and tested from a TTY.
+- The default build has no GUI, desktop, Polkit, or helper artifacts or dependencies.
+- All commands work from a text-only Fedora VM with no graphical packages installed.
+- Invalid or unsafe YAML causes no SELinux, file-context, label, state, or log mutation.
+- A complete apply/remove cycle is idempotent and recovery is tested from a TTY.
 
-## Milestone 0.3: application discovery and UX
+## Milestone 0.3: correctness, transactions, and recovery
 
-- [ ] Discover installed applications from desktop files.
-- [ ] Resolve `Exec=` launchers to likely final executables while showing the resolution chain.
-- [ ] Offer curated presets for Chrome, Chromium, Firefox, and selected Electron applications.
-- [ ] Detect common data directories without selecting them automatically.
-- [ ] Show the current SELinux process domain after launching an application.
-- [ ] Add per-profile diagnostics with actionable AVC summaries.
-- [ ] Add a first-run explanation of the threat model and a link to recovery instructions.
-- [ ] Add search and sorting when the profile list becomes large.
-- [ ] Add localization infrastructure and Japanese translations.
-- [ ] Add help pages suitable for GNOME Help/Yelp.
-- [ ] Add accessibility checks with Orca and keyboard-only navigation.
+- [ ] Confirm generated CIL complement syntax against supported SELinux userspace versions,
+  including the declared 3.6 minimum.
+- [ ] Verify the intended final allow graph with `sesearch`, including after unrelated policy-module
+  changes.
+- [ ] Add `apply --check` or equivalent dry-run behavior that compiles all modules and prints a
+  deterministic reconciliation plan without installing it.
+- [ ] Make `status` compare desired YAML, applied snapshots, installed modules, local fcontext rules,
+  and observed labels.
+- [ ] Detect partial installations and provide an explicit repair/recover workflow.
+- [ ] Journal each mutating transaction to a root-only structured log without profile documents,
+  generated policy, or file contents.
+- [ ] Add deterministic failpoints and integration tests for interruption and rollback at every
+  mutation stage.
+- [ ] Preserve and restore compatible pre-existing local fcontext rules rather than blindly
+  overwriting them.
+- [ ] Define crash-safe directory and file fsync behavior for snapshots and transaction markers.
+- [ ] Test configuration/state symlink swaps and path replacement between validation and relabeling.
 
 Exit criteria:
 
-- A user can configure a supported application without manually locating its ELF binary.
-- All essential operations work at 360 px width and with 200% text scaling.
+- Applying, updating, interrupting, repairing, and removing any tested profile cannot leave
+  orphaned custom labels or an unexplained partial state.
+- Recovery remains possible when desired YAML is missing or corrupt because it uses the trusted
+  applied snapshot.
 
-## Milestone 0.4: stronger launch mediation
+## Milestone 0.4: server operations
 
-The current model transitions any execution of the selected entrypoint from the configured launch domain. A malicious process in that domain may deliberately launch the protected application with unsafe command-line flags or use it as a confused deputy.
+- [ ] Document non-interactive provisioning with explicit exit codes and a versioned
+  machine-readable status format.
+- [ ] Provide example configuration-management deployment without adding a remote API or daemon.
+- [ ] Define whether systemd oneshot reconciliation is useful and safe; do not enable automatic
+  policy mutation at boot until failure and recovery behavior is tested.
+- [ ] Detect package updates that replace a configured executable and report drift before relabeling.
+- [ ] Add workload presets only as reviewed, static examples; never execute discovery commands from
+  YAML.
+- [ ] Test service launch domains and systemd-managed workloads in addition to interactive desktop
+  applications.
+- [ ] Define log rotation, audit retention, and integration with the system journal.
+- [ ] Add a manual page covering configuration ownership, deployment, status, rollback, and
+  emergency recovery.
+
+Exit criteria:
+
+- A configuration-management system can validate, apply, verify, and remove profiles without a TTY
+  or graphical session.
+- Server support is backed by Enforcing-mode tests of real systemd services and documented launch
+  domains.
+
+## Milestone 0.5: stronger launch mediation
+
+The current policy model transitions any execution of the selected entrypoint from the configured
+launch domain. A malicious process in that domain may deliberately launch the protected application
+with unsafe arguments or use it as a confused deputy.
 
 Research and prototype:
 
-- [ ] A dedicated launcher domain that is the only source permitted to transition into the application domain.
-- [ ] A brokered launch protocol with an allowlisted argument schema per application.
-- [ ] Systemd user service activation and whether same-user callers can bypass the intended policy.
-- [ ] Separate UNIX account or user namespace designs for applications requiring stronger isolation.
-- [ ] Interaction with Flatpak portals, Bubblewrap, and application sandboxing.
-- [ ] Whether SELinux constraints or MLS/MCS categories can add a meaningful caller distinction.
-- [ ] Safe handling of single-instance applications and D-Bus activation.
+- [ ] A dedicated launcher domain that is the only source permitted to transition into the
+  application domain.
+- [ ] An argument allowlist suitable for services and interactive applications without introducing
+  a long-running root broker.
+- [ ] Separate UNIX account or user-namespace designs for workloads requiring stronger isolation.
+- [ ] Interaction with systemd service hardening, containers, Flatpak, Bubblewrap, and existing
+  application sandboxes.
+- [ ] Whether SELinux constraints or MLS/MCS categories add meaningful caller distinction.
+- [ ] Safe handling of D-Bus activation, sockets, and single-instance applications.
 
-Do not ship a "Strict" label until the design is shown to resist a malicious process already running as the desktop user.
+Do not ship a "strict" mode until it is shown to resist a malicious process already running in the
+configured launch domain.
 
-## Milestone 0.5: policy portability
+## Milestone 0.6: policy portability
 
-- [ ] Define supported base-policy capabilities rather than assuming Fedora reference-policy interfaces.
-- [ ] Detect distribution, policy type, policy store, and installed interfaces.
-- [ ] Evaluate RHEL, CentOS Stream, AlmaLinux, Rocky Linux, and SELinux-enabled Debian derivatives.
+- [ ] Define supported base-policy capabilities rather than assuming Fedora reference-policy
+  interfaces.
+- [ ] Detect distribution, policy type, policy store, enabled mode, and installed interfaces.
+- [ ] Evaluate Fedora Server and Workstation first, then RHEL, CentOS Stream, AlmaLinux, Rocky Linux,
+  and SELinux-enabled Debian derivatives.
 - [ ] Generate policy from a capability model with explicit unsupported states.
-- [x] Add package builds for RPM first; evaluate Flatpak only for the unprivileged UI, with a separately packaged host helper.
-- [ ] Add AppStream screenshots after the UI stabilizes.
+- [ ] Build native RPM packages without desktop dependencies; evaluate other packaging only after
+  the target distribution has an integration test.
 
 Exit criteria:
 
-- Each supported distribution has automated install, apply, denial, update, and recovery tests.
+- Every supported distribution has automated headless install, validate, apply, denial, update,
+  drift, recovery, and removal tests.
 
 ## Milestone 1.0: release requirements
 
-- [ ] Independent review of the privilege boundary and command construction.
+- [ ] Independent review of root input parsing, path handling, race resistance, command construction,
+  state storage, and transaction recovery.
 - [ ] Independent SELinux policy review.
-- [ ] Complete integration test matrix.
-- [ ] Stable serialized helper protocol with version negotiation.
+- [ ] Complete Enforcing-mode integration matrix.
+- [ ] Stable versioned YAML schema and machine-readable output with documented compatibility rules.
 - [ ] Signed release artifacts and reproducible build notes.
 - [ ] Security policy and vulnerability-reporting process.
-- [ ] User documentation covering limitations and emergency recovery.
-- [ ] No known path that leaves a system in an unrecoverable mislabeled state.
+- [ ] Administrator documentation covering threat model, limitations, deployment, audit, and
+  emergency recovery.
+- [ ] No known path that leaves a tested system in an unrecoverable mislabeled state.
 
 ## Integration test matrix
 
@@ -115,42 +195,54 @@ Track results for each combination:
 
 | Dimension | Initial targets |
 |---|---|
-| Distribution | Fedora 44 Workstation |
-| SELinux userspace | 3.10; minimum-compatibility VM with 3.6 |
+| Distribution | Fedora 44 Server and Workstation |
+| SELinux userspace | Current Fedora version; minimum-compatibility VM with 3.6 |
 | Base policy | Fedora targeted policy current stable |
-| Session | GNOME Wayland |
-| Application | Google Chrome stable, Chromium, Firefox |
-| Launch source | `unconfined_t` / `unconfined_r` |
-| Data | config directory, cache directory, Unix socket, symlink, mmap |
-| Adversary domain | `unconfined_t`, `staff_t`, `container_t`, a test service domain |
-| Operations | fresh apply, update executable, add/remove directory, uninstall, interrupted apply |
+| Host environment | Text-only systemd server; GNOME Wayland workstation |
+| Workload | A systemd service; Google Chrome; Chromium; Firefox |
+| Launch source | Service-specific domain; `unconfined_t` / `unconfined_r` |
+| Data | Config directory, cache/state directory, Unix socket, symlink, mmap |
+| Adversary domain | `unconfined_t`, `staff_t`, `container_t`, test service domain |
+| Configuration | Valid, duplicate key, unknown field, unsafe mode/owner, symlink, oversized |
+| Operations | Validate, render, fresh apply, idempotent apply, update, drift, prune/remove, interrupted apply, repair |
 
-For each row, record:
+For each tested combination, record:
 
-- process context before and after launch;
-- file labels;
+- exact OS, SELinux userspace, kernel, and base-policy versions;
+- desired, applied, and observed status before and after reconciliation;
+- process contexts and file labels;
 - relevant `sesearch` output;
-- successful application functionality;
+- successful workload functionality;
 - denied direct access from every tested adversary domain;
-- successful removal and restoration.
+- successful removal, label restoration, and absence of both modules;
+- behavior after interruption at every transaction stage.
 
 ## Open technical questions
 
-1. Does a complement-based `deny` remain stable when new policy modules and types are added after a Microvisor profile is installed, or must profiles be rebuilt after every policy transaction?
-2. Which domains legitimately need `fd use` against a protected desktop application on modern GNOME, and can they be allowlisted without creating an exfiltration path?
-3. How should Microvisor distinguish package updates that replace the selected executable from user-initiated profile drift?
-4. Can existing distribution-specific application domains be reused safely instead of creating an unconfined-compatible domain?
-5. What is the least disruptive way to protect browser profile data while preserving portals, keyrings, crash reporting, hardware acceleration, and native messaging?
-6. How can root-side state and local user configuration be reconciled after restoring a system backup?
-7. Should the deny module exclude a dedicated recovery domain in addition to the application domain, and how should access to that domain be authenticated?
+1. Which Rust YAML implementation can enforce duplicate-key rejection, disable aliases/tags and
+   ambiguous coercions, and apply resource limits without maintaining a custom parser?
+2. Should `apply` require an explicit `--prune` to remove installed profiles missing from desired
+   YAML, or should removal remain exclusively `remove <id>`?
+3. How can configuration and target paths be opened and revalidated to minimize symlink, mount, and
+   replacement races across external SELinux commands?
+4. Does a complement-based `deny` remain stable when new policy modules and types are added, or must
+   profiles be rebuilt after every policy transaction?
+5. Which domains legitimately need `fd use` or `ptrace` access to protected desktop and server
+   workloads, and can they be allowed without creating an exfiltration path?
+6. Can existing distribution-specific application or service domains be reused safely instead of
+   creating an unconfined-compatible domain?
+7. How should applied snapshots evolve across YAML schema and Microvisor binary upgrades without
+   compromising recovery?
+8. Should a dedicated recovery domain be excluded from the deny complement, and how should access
+   to it be authenticated?
 
 ## Deferred ideas
 
-- Visual policy graph.
-- Import/export of signed profile bundles.
-- Organization-wide policy deployment.
-- AVC learning mode with human-reviewed suggestions.
-- MCS category allocation for containers and desktop applications.
-- Integration with systemd-homed or encrypted per-application storage.
+- Signed organization-wide profile bundles.
+- MCS category allocation for containers and services.
+- Human-reviewed AVC suggestions based on explicitly selected audit records.
+- A read-only local status exporter after the CLI and threat model are stable.
 
-These are deferred until correctness, recovery, and the launch threat model are resolved.
+These are deferred until configuration parsing, correctness, recovery, and the launch threat model
+are resolved. A GUI, Polkit helper, daemon, and remote mutation API are intentionally not deferred
+features; they are outside the chosen architecture.
