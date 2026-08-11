@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use microvisor::{config, diagnostics, engine, policy};
+use microvisor::{config, diagnostics, engine, policy, template};
 use std::{env, path::Path};
 use uuid::Uuid;
 
@@ -39,6 +39,9 @@ fn run() -> Result<i32> {
         [command] if command == "version" || command == "--version" || command == "-V" => {
             println!("microvisor {VERSION}");
             return Ok(0);
+        }
+        [command, rest @ ..] if command == "generate" => {
+            return generate_template(rest);
         }
         _ => {}
     }
@@ -93,6 +96,18 @@ fn run() -> Result<i32> {
     }
 }
 
+fn generate_template(arguments: &[String]) -> Result<i32> {
+    let id = Uuid::new_v4();
+    let path = match arguments {
+        [] => template::default_path(id),
+        [path] => path.into(),
+        _ => bail!("Usage: microvisor generate [output.yaml]"),
+    };
+    template::write_new(&path, id)?;
+    println!("Generated {} with profile ID {id}.", path.display());
+    Ok(0)
+}
+
 fn load_and_validate() -> Result<Vec<microvisor::model::ProtectionProfile>> {
     let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
     engine::validate_desired_profiles(profiles)
@@ -112,10 +127,11 @@ fn print_help() {
            microvisor apply\n\
            microvisor status\n\
            microvisor remove <profile-id>\n\
+           microvisor generate [output.yaml]\n\
            microvisor help\n\
            microvisor version\n\n\
          Configuration: {}/*.yaml\n\
-         All commands except help and version must run as root.",
+         Generate, help, and version do not require root. All other commands do.",
         config::DEFAULT_CONFIG_DIR
     );
 }

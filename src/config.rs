@@ -142,7 +142,7 @@ fn ensure_unique_ids(profiles: &[ProtectionProfile]) -> Result<()> {
     Ok(())
 }
 
-fn parse_profile(text: &str) -> Result<ProtectionProfile> {
+pub(crate) fn parse_profile(text: &str) -> Result<ProtectionProfile> {
     reject_unsupported_yaml(text)?;
     let options = serde_saphyr::options! {
         budget: serde_saphyr::budget! {

@@ -5,6 +5,9 @@ microvisor \- manage YAML-defined SELinux application protection profiles
 .B microvisor
 .RI { validate | apply | status | help | version }
 .br
+.B microvisor generate
+.RI [ output.yaml ]
+.br
 .B microvisor render
 .I profile-id
 .br
@@ -15,8 +18,15 @@ Microvisor is a short-lived, headless root command that generates and applies
 per-application SELinux policy. Desired profiles are read from regular YAML
 files below
 .IR /etc/microvisor/profiles.d .
-All commands except help and version require effective UID zero.
+Generate, help, and version do not require effective UID zero. All other
+commands do.
 .SH COMMANDS
+.TP
+.BI "generate [" output.yaml "]"
+Create a mode 0600 YAML template with a randomly generated UUID. Existing
+paths are never overwritten, and explicit output names must end in .yaml.
+Without an output path, write
+microvisor-UUID.yaml in the current directory.
 .TP
 .B validate
 Parse, normalize, and validate the complete desired configuration without

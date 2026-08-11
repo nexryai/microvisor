@@ -76,6 +76,18 @@ daemon or enable automatic policy mutation at boot.
 
 ## YAML configuration
 
+Create an editable template without root privileges:
+
+```bash
+microvisor generate chrome.yaml
+```
+
+The command generates a UUID v4, writes a mode `0600` YAML file, and refuses to overwrite an
+existing path. If the output path is omitted, the file is named
+`microvisor-<generated-uuid>.yaml` in the current directory. Explicit output names must end in
+`.yaml`. Edit the placeholder name and paths, review the result, and then install it on the
+designated production target.
+
 Each `/etc/microvisor/profiles.d/*.yaml` file contains one versioned profile:
 
 ```yaml
@@ -109,6 +121,12 @@ paths, missing targets, and overlapping profiles.
 
 ## Commands
 
+Template generation is intentionally available without root:
+
+```bash
+microvisor generate [output.yaml]
+```
+
 Run these commands as root only on a designated production target or in the CI integration VM:
 
 ```bash
@@ -120,6 +138,7 @@ sudo microvisor remove <profile-id>
 ```
 
 - `validate` parses, normalizes, and validates the complete configuration without changing SELinux.
+- `generate` creates a new, editable YAML template with a random UUID and never overwrites a file.
 - `render` prints deterministic TE/CIL policy and file-context operations for review.
 - `apply` validates all profiles and builds every base module before the first host mutation. It is
   idempotent and attempts batch rollback if a later profile fails. After protection is active, an

@@ -32,6 +32,7 @@ an explicitly designated production target. Do not use a production host for dev
 - `src/engine.rs`: privileged SELinux orchestration, state, locking, transactions, and recovery.
 - `src/policy.rs`: pure SELinux policy generation and input validation; preserve and extend it.
 - `src/model.rs`: versioned YAML profile and derived policy identifiers.
+- `src/template.rs`: non-privileged UUID and YAML template generation with no-overwrite writes.
 - `tests/policy.rs`: deterministic policy-generator and validation tests.
 - `tests/selinux-integration.sh`: CLI reconciliation and recovery coverage in a disposable SELinux
   Enforcing Fedora VM.
@@ -76,8 +77,11 @@ an explicitly designated production target. Do not use a production host for dev
 
 ## CLI and configuration requirements
 
-- Use subcommands with explicit semantics: `validate` and `render` are read-only; `apply` and
-  `remove` mutate host state; `status` compares desired, applied, and observed SELinux state.
+- Use subcommands with explicit semantics: `generate` creates an uninstalled local template;
+  `validate` and `render` are read-only; `apply` and `remove` mutate host state; `status` compares
+  desired, applied, and observed SELinux state.
+- `generate` must remain usable without root, generate a UUID v4, create mode `0600` YAML with
+  `O_NOFOLLOW` and create-new semantics, and never overwrite an existing path.
 - `apply` reconciles the complete configuration directory. Never silently preserve an installed
   profile whose desired YAML was removed; require an explicit, documented removal policy.
 - Version the YAML schema from the first release. Unknown fields are errors, not warnings.

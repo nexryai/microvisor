@@ -75,8 +75,9 @@ Priority: highest.
   and excessive profile counts.
 - [x] Load only regular root-owned configuration files that are not group- or world-writable; use
   race-resistant no-follow opens and deterministic filename ordering.
-- [x] Add `validate`, `render <id>`, `apply`, `status`, and `remove <id>` subcommands with stable exit
-  codes. Reserve stdout for requested output and stderr for diagnostics.
+- [x] Add `generate [output.yaml]`, `validate`, `render <id>`, `apply`, `status`, and `remove <id>`
+  subcommands with stable exit codes. `generate` creates a private, no-overwrite YAML template with
+  a UUID v4 without requiring root. Reserve stdout for requested output and stderr for diagnostics.
 - [x] Separate parsing, semantic validation, full-set conflict validation, policy rendering,
   reconciliation planning, and privileged execution.
 - [x] Make `apply` validate all profiles and compile every generated module before the first host
