@@ -69,6 +69,10 @@ an explicitly designated production target. Do not use a production host for dev
     what protects profile data.
 13. Do not add a daemon, network listener, remote API, templating engine, environment substitution,
     or arbitrary include mechanism merely to support servers. Each expands the root input surface.
+14. Once the deny module is active, the root CLI's launch domain may be unable to inspect protected
+    directories. Reuse a path without filesystem inspection only when it exactly matches the
+    validated root-owned applied snapshot. New or changed paths still require canonicalization and
+    metadata checks; recovery must remove the deny module before inspecting protected data.
 
 ## CLI and configuration requirements
 

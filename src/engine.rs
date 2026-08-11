@@ -34,9 +34,32 @@ pub fn require_root() -> Result<()> {
 }
 
 pub fn validate_profiles(profiles: Vec<ProtectionProfile>) -> Result<Vec<ProtectionProfile>> {
+    validate_profiles_with_applied(profiles, &[])
+}
+
+pub fn validate_desired_profiles(
+    profiles: Vec<ProtectionProfile>,
+) -> Result<Vec<ProtectionProfile>> {
+    let _transaction_lock = acquire_transaction_lock()?;
+    let applied = if Path::new(STATE_DIR).try_exists()? {
+        ensure_state_directory()?;
+        load_all_states()?
+    } else {
+        Vec::new()
+    };
+    validate_profiles_with_applied(profiles, &applied)
+}
+
+fn validate_profiles_with_applied(
+    profiles: Vec<ProtectionProfile>,
+    applied: &[ProtectionProfile],
+) -> Result<Vec<ProtectionProfile>> {
     let mut normalized = profiles
         .into_iter()
-        .map(normalize_profile)
+        .map(|profile| {
+            let previous = applied.iter().find(|item| item.id == profile.id);
+            normalize_profile_with_applied(profile, previous)
+        })
         .collect::<Result<Vec<_>>>()?;
     normalized.sort_by_key(|profile| profile.id);
 
@@ -49,9 +72,10 @@ pub fn validate_profiles(profiles: Vec<ProtectionProfile>) -> Result<Vec<Protect
 }
 
 pub fn apply_profiles(profiles: Vec<ProtectionProfile>) -> Result<usize> {
-    let profiles = validate_profiles(profiles)?;
     let _transaction_lock = acquire_transaction_lock()?;
     ensure_environment()?;
+    let applied = load_all_states()?;
+    let profiles = validate_profiles_with_applied(profiles, &applied)?;
 
     // Build every base module and render every deny module before the first host mutation. This
     // catches configuration and compiler failures without leaving a partially reconciled set.
@@ -111,11 +135,11 @@ pub struct ProfileStatus {
 }
 
 pub fn status(desired: Vec<ProtectionProfile>) -> Result<(Vec<ProfileStatus>, bool)> {
-    let desired = validate_profiles(desired)?;
     let _transaction_lock = acquire_transaction_lock()?;
     ensure_status_environment()?;
     ensure_state_directory()?;
     let applied = load_all_states()?;
+    let desired = validate_profiles_with_applied(desired, &applied)?;
     let mut result = Vec::new();
     let mut converged = true;
 
@@ -729,13 +753,23 @@ fn rollback_completed(completed: &[(ProtectionProfile, Option<ProtectionProfile>
     }
 }
 
-pub fn normalize_profile(mut profile: ProtectionProfile) -> Result<ProtectionProfile> {
+pub fn normalize_profile(profile: ProtectionProfile) -> Result<ProtectionProfile> {
+    normalize_profile_with_applied(profile, None)
+}
+
+fn normalize_profile_with_applied(
+    mut profile: ProtectionProfile,
+    applied: Option<&ProtectionProfile>,
+) -> Result<ProtectionProfile> {
     policy::validate_profile(&profile)?;
 
     // Resolve symlinks before overlap checks and before generating file-context expressions.
     // All later commands receive these canonical paths as individual argv entries.
-    let executable = fs::canonicalize(&profile.executable)
-        .with_context(|| format!("Could not resolve {}", profile.executable.display()))?;
+    let executable = match applied.filter(|item| item.executable == profile.executable) {
+        Some(item) => item.executable.clone(),
+        None => fs::canonicalize(&profile.executable)
+            .with_context(|| format!("Could not resolve {}", profile.executable.display()))?,
+    };
     if !executable.is_file() {
         bail!("{} is not a regular file", executable.display());
     }
@@ -745,9 +779,18 @@ pub fn normalize_profile(mut profile: ProtectionProfile) -> Result<ProtectionPro
 
     let mut directories = Vec::with_capacity(profile.data_directories.len());
     for directory in &profile.data_directories {
+        if let Some(resolved) = applied
+            .and_then(|item| item.data_directories.iter().find(|path| *path == directory))
+            .cloned()
+        {
+            directories.push(resolved);
+            continue;
+        }
         let resolved = fs::canonicalize(directory)
             .with_context(|| format!("Could not resolve {}", directory.display()))?;
-        if !resolved.is_dir() {
+        let metadata = fs::metadata(&resolved)
+            .with_context(|| format!("Could not inspect {}", resolved.display()))?;
+        if !metadata.is_dir() {
             bail!("{} is not a directory", resolved.display());
         }
         if normal_component_count(&resolved) < 3 {
@@ -1379,7 +1422,8 @@ fn find_command(command: &str) -> Result<PathBuf> {
 mod tests {
     use super::{
         AppliedState, PolicyBuildConfig, STATE_SCHEMA_VERSION, deserialize_state,
-        parse_major_minor, parse_policy_build_config, validate_profiles,
+        normalize_profile_with_applied, parse_major_minor, parse_policy_build_config,
+        validate_profiles,
     };
     use crate::model::ProtectionProfile;
     use std::{
@@ -1491,6 +1535,32 @@ mod tests {
         profile.executable = executable;
         profile.data_directories = vec![data, alias];
         assert!(validate_profiles(vec![profile]).is_err());
+    }
+
+    #[test]
+    fn reuses_applied_data_paths_that_the_deny_module_hides() {
+        let root = TempDir::new().unwrap();
+        let bin = root.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let executable = bin.join("application");
+        fs::write(&executable, b"test").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let hidden_data = root.path().join("data/application");
+        let mut applied = ProtectionProfile::new();
+        applied.name = "Applied profile".into();
+        applied.executable = executable;
+        applied.data_directories = vec![hidden_data.clone()];
+
+        let desired = applied.clone();
+        assert_eq!(
+            normalize_profile_with_applied(desired, Some(&applied)).unwrap(),
+            applied
+        );
+
+        let mut changed = applied.clone();
+        changed.data_directories = vec![root.path().join("data/changed")];
+        assert!(normalize_profile_with_applied(changed, Some(&applied)).is_err());
     }
 
     #[test]

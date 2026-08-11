@@ -95,7 +95,7 @@ fn run() -> Result<i32> {
 
 fn load_and_validate() -> Result<Vec<microvisor::model::ProtectionProfile>> {
     let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
-    engine::validate_profiles(profiles)
+    engine::validate_desired_profiles(profiles)
 }
 
 fn parse_id(value: &str) -> Result<Uuid> {

@@ -122,7 +122,10 @@ sudo microvisor remove <profile-id>
 - `validate` parses, normalizes, and validates the complete configuration without changing SELinux.
 - `render` prints deterministic TE/CIL policy and file-context operations for review.
 - `apply` validates all profiles and builds every base module before the first host mutation. It is
-  idempotent and attempts batch rollback if a later profile fails.
+  idempotent and attempts batch rollback if a later profile fails. After protection is active, an
+  unchanged data path is recognized from the root-owned applied snapshot because the deny rule may
+  prevent the CLI's own launch domain from inspecting that directory. New and changed paths still
+  undergo canonicalization and filesystem metadata checks.
 - `status` compares desired profiles, root-owned snapshots, installed modules, and local
   file-context rules. Exit status 2 means drift.
 - `remove` trusts the root-owned applied snapshot rather than mutable YAML when restoring labels.

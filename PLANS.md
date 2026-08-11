@@ -51,6 +51,9 @@ The repository now uses the headless architecture:
 - Reused and hardened: deterministic TE/CIL generation, path and identifier validation, root UID check,
   transaction lock, applied-profile snapshots, apply/update rollback attempt, label restoration,
   Enforcing-mode QEMU integration harness, and RPM groundwork.
+- Applied-state-aware validation allows idempotent commands to recognize unchanged protected paths
+  that the active deny complement deliberately hides from the CLI's launch domain. It does not
+  bypass filesystem checks for new or changed paths.
 - Replaced: per-user JSON profile storage and GUI-to-helper JSON requests with a versioned YAML
   desired-state loader and typed full-set validation.
 - Removed: GTK/Libadwaita UI, asynchronous GUI plumbing, `microvisor-helper`, Polkit policy, desktop
