@@ -38,20 +38,33 @@ GTK, Libadwaita, a display server, a desktop environment, and Polkit are not req
 support means headless operation on explicitly tested SELinux distributions; it does not imply
 that every SELinux policy family is supported.
 
-Typical Fedora development dependencies:
+CI container provisioning example (the CI container runs as root):
 
 ```bash
-sudo dnf install \
+dnf install \
   cargo rust meson ninja-build \
   policycoreutils policycoreutils-python-utils \
   libselinux-utils selinux-policy-devel checkpolicy
 ```
 
+Provision equivalent dependencies before entering a local development environment. Development
+must stay unprivileged: do not run `sudo`, a root shell, a root-owned container, or Microvisor as
+root on a developer machine. Formatting, unit tests, compilation, and package-layout checks do not
+require root. Privileged SELinux integration runs only in CI's disposable Enforcing VM. Root is
+allowed on a designated production target for installation and normal Microvisor operation.
+
 ## Build and install
+
+Build as an unprivileged user:
 
 ```bash
 meson setup build
 meson compile -C build
+```
+
+Install only on a designated production target (or in CI packaging tests):
+
+```bash
 sudo meson install -C build
 ```
 
@@ -76,7 +89,8 @@ block_ptrace: true
 block_fd_use: true
 ```
 
-Configuration files must be regular, root-owned, have exactly one hard link, and not be writable by
+On a designated production target, configuration files must be regular, root-owned, have exactly
+one hard link, and not be writable by
 group or other users. The configuration directory must also be root-owned, non-writable by group or
 other users, and not a symlink. A typical setup is:
 
@@ -92,6 +106,8 @@ streams, excessive nesting or node counts, oversized files, invalid SELinux iden
 paths, missing targets, and overlapping profiles.
 
 ## Commands
+
+Run these commands as root only on a designated production target or in the CI integration VM:
 
 ```bash
 sudo microvisor validate

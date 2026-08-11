@@ -30,6 +30,18 @@ Accepted direction:
 This supersedes the 0.1 GNOME/Libadwaita and Polkit-helper design. That implementation is migration
 history, not a second supported frontend.
 
+## Development and production privilege boundary
+
+- Development environments are strictly unprivileged. Contributors and coding agents must not use
+  `sudo`, `su`, `pkexec`, root shells, root-owned development containers, or local root VMs.
+- Formatting, unit tests, parsing and rendering tests, compilation, linting, and package-layout
+  checks must be runnable without root.
+- Privileged SELinux mutation and recovery tests run only in CI's disposable Enforcing VM.
+- Root execution is permitted on explicitly designated production systems for installation and
+  normal Microvisor operation. Production machines are not development test hosts.
+- A test that cannot be completed without local root is deferred to the CI integration matrix; the
+  missing local result must be reported rather than bypassing this boundary.
+
 ## CLI migration status
 
 The repository now uses the headless architecture:

@@ -6,6 +6,12 @@ This file defines the working contract for coding agents contributing to Microvi
 security-sensitive: syntactically valid code can still weaken isolation, damage host labeling, or
 make a server unbootable. Microvisor is a headless, YAML-configured CLI that runs entirely as root.
 
+Production execution and development are separate trust domains. Never use `sudo`, `su`,
+`pkexec`, a root shell, or a root-owned container in a developer workstation or other development
+environment. Build, lint, unit-test, render-test, and package-layout checks must run as an
+unprivileged user. Root execution is permitted only in CI's disposable SELinux Enforcing VM and on
+an explicitly designated production target. Do not use a production host for development tests.
+
 ## Target architecture
 
 - `microvisor` is a short-lived command-line program. It has no GUI, display-server, desktop-session,
@@ -98,7 +104,8 @@ The default feature set must build the headless CLI and must not link GTK or Lib
 checks must verify that no desktop, AppStream, icon-cache, helper, or Polkit artifacts are installed.
 
 For SELinux integration changes, test in a disposable Fedora VM with Enforcing mode enabled. At
-minimum verify:
+minimum verify the following in CI. Do not run these privileged integration steps in a development
+environment:
 
 ```bash
 # Validate and preview without mutation
@@ -173,6 +180,9 @@ After editing:
 
 ## Prohibited shortcuts
 
+- Using root anywhere in a development environment, including local VMs or containers. Privileged
+  testing belongs in CI's disposable integration VM; root execution on designated production
+  systems is permitted for deployment and operation only.
 - Retaining the GUI or helper as a second supported architecture.
 - Loading configuration from a non-root user's home directory or environment variables.
 - Passing arbitrary command strings to a shell.
