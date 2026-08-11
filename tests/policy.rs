@@ -42,7 +42,7 @@ fn generated_policy_has_allowlist_and_deny_complement() {
 }
 
 #[test]
-fn type_enforcement_transitions_from_configured_desktop_domain() {
+fn type_enforcement_transitions_from_configured_launch_domain() {
     let profile = example_profile();
     let ids = profile.identifiers();
     let te = policy::render_type_enforcement(&profile).unwrap();
@@ -93,6 +93,22 @@ fn duplicate_directories_are_rejected() {
         PathBuf::from("/home/test/.config/google-chrome"),
         PathBuf::from("/home/test/.config/google-chrome"),
     ];
+    assert!(policy::validate_profile(&profile).is_err());
+}
+
+#[test]
+fn unsupported_schema_versions_are_rejected() {
+    let mut profile = example_profile();
+    profile.schema_version = 2;
+    assert!(policy::validate_profile(&profile).is_err());
+}
+
+#[test]
+fn excessive_directory_counts_are_rejected() {
+    let mut profile = example_profile();
+    profile.data_directories = (0..65)
+        .map(|index| PathBuf::from(format!("/var/lib/microvisor-test/application/{index}")))
+        .collect();
     assert!(policy::validate_profile(&profile).is_err());
 }
 

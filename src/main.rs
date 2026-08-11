@@ -1,103 +1,121 @@
-mod helper_client;
-mod storage;
-mod ui;
+use anyhow::{Context, Result, bail};
+use microvisor::{config, diagnostics, engine, policy};
+use std::{env, path::Path};
+use uuid::Uuid;
 
-use adw::prelude::*;
-use gtk::{gio, glib};
-use microvisor::diagnostics;
-
-const APP_ID: &str = "me.nexryai.microvisor";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const EXIT_ERROR: i32 = 1;
+const EXIT_DRIFT: i32 = 2;
 
-fn main() -> glib::ExitCode {
-    diagnostics::info("application", format_args!("starting Microvisor {VERSION}"));
-    gio::resources_register_include!("microvisor.gresource")
-        .expect("Could not register application resources");
-    diagnostics::debug(
-        "application",
-        format_args!("registered application resources"),
-    );
-
-    let app = adw::Application::builder()
-        .application_id(APP_ID)
-        .resource_base_path("/me/nexryai/microvisor")
-        .build();
-
-    app.connect_startup(setup_actions);
-    app.connect_activate(|app| {
-        diagnostics::info("application", format_args!("activation requested"));
-        ui::window::present(app);
-    });
-    let exit_code = app.run();
-    diagnostics::info(
-        "application",
-        format_args!("application stopped with {exit_code:?}"),
-    );
-    exit_code
+fn main() {
+    match run() {
+        Ok(code) => std::process::exit(code),
+        Err(error) => {
+            diagnostics::error("cli", format_args!("{error:#}"));
+            std::process::exit(EXIT_ERROR);
+        }
+    }
 }
 
-fn setup_actions(app: &adw::Application) {
-    diagnostics::debug(
-        "application",
-        format_args!("installing application actions"),
+fn run() -> Result<i32> {
+    let arguments = env::args_os()
+        .skip(1)
+        .map(|argument| {
+            argument
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("Command arguments must be valid UTF-8"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    match arguments.as_slice() {
+        [] => {
+            print_help();
+            return Ok(0);
+        }
+        [command] if command == "help" || command == "--help" || command == "-h" => {
+            print_help();
+            return Ok(0);
+        }
+        [command] if command == "version" || command == "--version" || command == "-V" => {
+            println!("microvisor {VERSION}");
+            return Ok(0);
+        }
+        _ => {}
+    }
+
+    engine::require_root()?;
+    match arguments.as_slice() {
+        [command] if command == "validate" => {
+            let profiles = load_and_validate()?;
+            println!("Validated {} profile(s).", profiles.len());
+            Ok(0)
+        }
+        [command, id] if command == "render" => {
+            let id = parse_id(id)?;
+            let profiles = load_and_validate()?;
+            let profile = profiles
+                .iter()
+                .find(|profile| profile.id == id)
+                .with_context(|| format!("No configured profile exists for {id}"))?;
+            print!("{}", policy::render_preview(profile)?);
+            Ok(0)
+        }
+        [command] if command == "apply" => {
+            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
+            let count = engine::apply_profiles(profiles)?;
+            println!("Applied {count} changed profile(s).");
+            Ok(0)
+        }
+        [command] if command == "status" => {
+            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
+            let (statuses, converged) = engine::status(profiles)?;
+            if statuses.is_empty() {
+                println!("No configured or applied profiles.");
+            } else {
+                for status in statuses {
+                    println!("{}\t{}\t{}", status.id, status.state, status.name);
+                }
+            }
+            Ok(if converged { 0 } else { EXIT_DRIFT })
+        }
+        [command, id] if command == "remove" => {
+            let id = parse_id(id)?;
+            if engine::remove_profile(id)? {
+                println!("Removed profile {id}.");
+            } else {
+                println!("Profile {id} is not applied.");
+            }
+            Ok(0)
+        }
+        _ => {
+            bail!("Invalid command. Run 'microvisor help' for usage")
+        }
+    }
+}
+
+fn load_and_validate() -> Result<Vec<microvisor::model::ProtectionProfile>> {
+    let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
+    engine::validate_profiles(profiles)
+}
+
+fn parse_id(value: &str) -> Result<Uuid> {
+    Uuid::parse_str(value).with_context(|| format!("Invalid profile ID '{value}'"))
+}
+
+fn print_help() {
+    println!(
+        "Microvisor {VERSION}\n\
+         Headless SELinux protection profile manager\n\n\
+         Usage:\n\
+           microvisor validate\n\
+           microvisor render <profile-id>\n\
+           microvisor apply\n\
+           microvisor status\n\
+           microvisor remove <profile-id>\n\
+           microvisor help\n\
+           microvisor version\n\n\
+         Configuration: {}/*.yaml\n\
+         All commands except help and version must run as root.",
+        config::DEFAULT_CONFIG_DIR
     );
-    let quit = gio::SimpleAction::new("quit", None);
-    quit.connect_activate(glib::clone!(
-        #[weak]
-        app,
-        move |_, _| {
-            diagnostics::info("application", format_args!("quit action activated"));
-            app.quit();
-        }
-    ));
-    app.add_action(&quit);
-    app.set_accels_for_action("app.quit", &["<primary>q"]);
-    app.set_accels_for_action("win.add-profile", &["<primary>n"]);
-    app.set_accels_for_action("app.shortcuts", &["<primary>question"]);
-
-    let shortcuts = gio::SimpleAction::new("shortcuts", None);
-    shortcuts.connect_activate(glib::clone!(
-        #[weak]
-        app,
-        move |_, _| {
-            diagnostics::info("application", format_args!("shortcuts action activated"));
-            if let Some(window) = app.active_window() {
-                ui::shortcuts_dialog::present(&window);
-            } else {
-                diagnostics::warn(
-                    "application",
-                    format_args!("could not present shortcuts without an active window"),
-                );
-            }
-        }
-    ));
-    app.add_action(&shortcuts);
-
-    let about = gio::SimpleAction::new("about", None);
-    about.connect_activate(glib::clone!(
-        #[weak]
-        app,
-        move |_, _| {
-            diagnostics::info("application", format_args!("about action activated"));
-            let dialog = adw::AboutDialog::builder()
-                .application_name("Microvisor")
-                .application_icon(APP_ID)
-                .developer_name("nexryai")
-                .version(VERSION)
-                .comments("Protect application data directories with generated SELinux policy.")
-                .website("https://github.com/nexryai/microvisor")
-                .issue_url("https://github.com/nexryai/microvisor/issues")
-                .license_type(gtk::License::MitX11)
-                .build();
-            if let Some(window) = app.active_window() {
-                dialog.present(Some(&window));
-            } else {
-                diagnostics::warn(
-                    "application",
-                    format_args!("could not present About dialog without an active window"),
-                );
-            }
-        }
-    ));
-    app.add_action(&about);
 }

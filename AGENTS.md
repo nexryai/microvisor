@@ -4,8 +4,7 @@
 
 This file defines the working contract for coding agents contributing to Microvisor. The project is
 security-sensitive: syntactically valid code can still weaken isolation, damage host labeling, or
-make a server unbootable. Microvisor is migrating from a GNOME application with a Polkit helper to
-a headless, YAML-configured CLI that runs entirely as root.
+make a server unbootable. Microvisor is a headless, YAML-configured CLI that runs entirely as root.
 
 ## Target architecture
 
@@ -20,24 +19,21 @@ a headless, YAML-configured CLI that runs entirely as root.
 - The CLI must work without a graphical session and must keep stdout suitable for requested policy
   or machine-readable output.
 
-## Project map during migration
+## Project map
 
+- `src/main.rs`: root CLI argument handling and output/exit-code contract.
+- `src/config.rs`: secure YAML discovery, bounded parsing, ownership checks, and schema loading.
+- `src/engine.rs`: privileged SELinux orchestration, state, locking, transactions, and recovery.
 - `src/policy.rs`: pure SELinux policy generation and input validation; preserve and extend it.
-- `src/model.rs`: profile types; migrate them to a versioned YAML configuration schema.
-- `src/bin/microvisor-helper.rs`: legacy privileged implementation to fold into the CLI and remove.
-- `src/main.rs`, `src/ui/`, `src/helper_client.rs`: legacy GUI and helper client to remove.
-- `data/icons/`, desktop, AppStream, and Polkit files: legacy desktop integration to remove.
+- `src/model.rs`: versioned YAML profile and derived policy identifiers.
 - `tests/policy.rs`: deterministic policy-generator and validation tests.
-- `tests/selinux-integration.sh`: legacy helper integration test; replace with CLI reconciliation and
-  recovery coverage in a disposable SELinux Enforcing Fedora VM.
+- `tests/selinux-integration.sh`: CLI reconciliation and recovery coverage in a disposable SELinux
+  Enforcing Fedora VM.
 - `.github/scripts/run-fedora-selinux-vm.rs`: QEMU lifecycle and guest provisioning for CI.
-- `.github/workflows/ci.yml`: transition-era fast build and unit checks; remove GUI/metadata jobs.
+- `.github/workflows/ci.yml`: fast headless build, unit, lint, and package-layout checks.
 - `.github/workflows/selinux-integration.yml`: destructive Enforcing-mode integration tests.
-- `PLANS.md`: migration roadmap and decisions not yet implemented.
-
-Do not describe legacy GUI/helper behavior as the target architecture. Remove legacy components in
-reviewable steps while keeping the last validated recovery path available until its CLI replacement
-has equivalent tests.
+- `data/microvisor.8`: installed command, configuration, exit-status, and recovery reference.
+- `PLANS.md`: roadmap and decisions not yet implemented.
 
 ## Non-negotiable security boundaries
 
@@ -91,13 +87,15 @@ is:
 
 ```bash
 cargo fmt --check
-cargo test --no-default-features
-cargo check --all-targets --no-default-features
+cargo test --locked
+cargo check --all-targets --locked
+cargo clippy --all-targets --locked -- -D warnings
+meson setup build --wipe
+meson compile -C build
 ```
 
-After the GUI, helper, and desktop packaging are removed, the default feature set must build the
-headless CLI and must not link GTK or Libadwaita. Packaging checks must verify that no desktop,
-AppStream, icon-cache, or Polkit artifacts are installed.
+The default feature set must build the headless CLI and must not link GTK or Libadwaita. Packaging
+checks must verify that no desktop, AppStream, icon-cache, helper, or Polkit artifacts are installed.
 
 For SELinux integration changes, test in a disposable Fedora VM with Enforcing mode enabled. At
 minimum verify:

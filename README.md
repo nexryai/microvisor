@@ -1,7 +1,7 @@
 # Microvisor
 
-Microvisor is a planned headless, root-operated command-line tool for managing per-application
-SELinux protection profiles. Profiles are declared as YAML files, so the same configuration can be
+Microvisor is a headless, root-operated command-line tool for managing per-application SELinux
+protection profiles. Profiles are declared as YAML files, so the same configuration can be
 reviewed, versioned, and deployed on workstations and servers without a graphical session.
 
 A profile creates:
@@ -14,43 +14,53 @@ A profile creates:
   protected application domain;
 - optional cross-domain `ptrace` and file-descriptor restrictions.
 
-## Transition status
-
-The repository is changing architecture. The checked-in 0.1 implementation still contains the
-GNOME/Libadwaita frontend, a Polkit helper, and JSON request handling. Those components are legacy
-code and will be removed. The YAML CLI described below is the target architecture and is not yet a
-usable release.
-
-Do not deploy the current code as a security product. SELinux base policies vary between
-distributions, and generated policy and recovery behavior require review and Enforcing-mode tests.
-See `PLANS.md` for the migration sequence and acceptance criteria.
-
-## Target operation
-
-Microvisor will run as one short-lived root process. It will not contain a GUI, depend on a desktop
-session, use Polkit, or delegate work to a separate helper. Root is required because policy module
+Microvisor runs as one short-lived root process. It has no GUI, helper process, Polkit, desktop
+session, display-server, or network-service dependency. Root is required because policy module
 installation, file-context changes, and relabeling are privileged operations.
 
-The initial command interface is planned as:
+## Status
+
+This repository is an experimental Fedora-first implementation, not a finished security product.
+The headless YAML CLI is implemented, but the new transaction path still requires completion of the
+SELinux Enforcing integration matrix before production use. SELinux base policies vary between
+distributions, and generated policy and recovery behavior require review.
+
+## Requirements
+
+The initial target is Fedora 44 Server and Workstation with SELinux Enforcing and:
+
+- Rust 1.85 or newer for building;
+- SELinux userspace 3.6 or newer, because Microvisor relies on CIL `deny` rules;
+- `policycoreutils`, `policycoreutils-python-utils`, `libselinux-utils`, `checkpolicy`, and the
+  reference-policy development Makefile from `selinux-policy-devel`.
+
+GTK, Libadwaita, a display server, a desktop environment, and Polkit are not required. Server
+support means headless operation on explicitly tested SELinux distributions; it does not imply
+that every SELinux policy family is supported.
+
+Typical Fedora development dependencies:
 
 ```bash
-sudo microvisor validate
-sudo microvisor render <profile-id>
-sudo microvisor apply
-sudo microvisor status
-sudo microvisor remove <profile-id>
+sudo dnf install \
+  cargo rust meson ninja-build \
+  policycoreutils policycoreutils-python-utils \
+  libselinux-utils selinux-policy-devel checkpolicy
 ```
 
-`apply` will reconcile the complete desired configuration under
-`/etc/microvisor/profiles.d/`. It must validate every profile and compile all generated policy
-before changing the host. Mutating operations will be serialized by a root-owned runtime lock and
-will retain root-owned applied-state snapshots under `/var/lib/microvisor/` for rollback and
-recovery. The implementation must never invoke a shell with values taken from YAML.
+## Build and install
 
-## Planned YAML configuration
+```bash
+meson setup build
+meson compile -C build
+sudo meson install -C build
+```
 
-Each `/etc/microvisor/profiles.d/*.yaml` file will contain one versioned profile. The provisional
-schema is:
+This installs the CLI, its manual page, and `/etc/microvisor/profiles.d/`. It does not install a
+daemon or enable automatic policy mutation at boot.
+
+## YAML configuration
+
+Each `/etc/microvisor/profiles.d/*.yaml` file contains one versioned profile:
 
 ```yaml
 schema_version: 1
@@ -66,31 +76,51 @@ block_ptrace: true
 block_fd_use: true
 ```
 
-The exact schema remains subject to change until the migration milestone is complete. Parsers will
-reject unknown or duplicate fields, unsupported schema versions, aliases or non-scalar tricks,
-oversized input, invalid SELinux identifiers, relative or broad paths, missing targets, and
-profiles whose paths overlap. Configuration files must be regular, root-owned, and not writable by
-group or other users. Applied-state snapshots are internal data, not configuration inputs.
+Configuration files must be regular, root-owned, have exactly one hard link, and not be writable by
+group or other users. The configuration directory must also be root-owned, non-writable by group or
+other users, and not a symlink. A typical setup is:
 
-## Target requirements
+```bash
+sudo install -d -m 0755 /etc/microvisor/profiles.d
+sudo install -o root -g root -m 0600 chrome.yaml \
+  /etc/microvisor/profiles.d/chrome.yaml
+```
 
-The first supported platform remains Fedora with SELinux Enforcing. The headless build will require:
+The loader accepts a deliberately restricted YAML subset. It rejects unknown or duplicate fields,
+unsupported schema versions, ambiguous booleans, tags, anchors, aliases, merge keys, document
+streams, excessive nesting or node counts, oversized files, invalid SELinux identifiers, unsafe
+paths, missing targets, and overlapping profiles.
 
-- Rust 1.85 or newer;
-- SELinux userspace 3.6 or newer, because Microvisor relies on CIL `deny` rules;
-- `policycoreutils`, `policycoreutils-python-utils`, `libselinux-utils`, `checkpolicy`, and the
-  reference-policy development Makefile from `selinux-policy-devel`.
+## Commands
 
-GTK, Libadwaita, a display server, a desktop environment, and Polkit will not be required after the
-migration. Server support means headless operation on explicitly tested SELinux distributions; it
-does not imply that every SELinux policy family is supported.
+```bash
+sudo microvisor validate
+sudo microvisor render <profile-id>
+sudo microvisor apply
+sudo microvisor status
+sudo microvisor remove <profile-id>
+```
 
-## Diagnostics and audit trail
+- `validate` parses, normalizes, and validates the complete configuration without changing SELinux.
+- `render` prints deterministic TE/CIL policy and file-context operations for review.
+- `apply` validates all profiles and builds every base module before the first host mutation. It is
+  idempotent and attempts batch rollback if a later profile fails.
+- `status` compares desired profiles, root-owned snapshots, installed modules, and local
+  file-context rules. Exit status 2 means drift.
+- `remove` trusts the root-owned applied snapshot rather than mutable YAML when restoring labels.
 
-The CLI will write human-readable diagnostics to standard error and reserve standard output for
-requested output such as rendered policy or machine-readable status. Diagnostics must not dump
-complete YAML documents, generated policy, or sensitive file contents. Mutating transactions are
-planned to be recorded in a root-only audit log with profile ID, operation, stage, and result.
+Deleting YAML does not silently remove installed protection. `status` reports
+`installed-without-config`; use `remove <profile-id>` explicitly.
+
+Mutating operations are serialized by `/run/microvisor/transaction.lock`. Applied-state snapshots
+are atomically stored with mode `0600` under `/var/lib/microvisor/profiles/`, whose mode is `0700`.
+Snapshots are internal recovery data, not configuration input.
+
+## Diagnostics
+
+Microvisor writes diagnostics to standard error and reserves standard output for requested output
+such as rendered policy and status. Diagnostics identify the component, operation, profile ID, and
+result without dumping YAML documents, generated policy, or file contents.
 
 ## Threat model and limitations
 
@@ -107,15 +137,27 @@ services, containers, and other TE domains. It does not defend against:
 
 Running Microvisor as root does not make YAML trusted. A hostile or accidentally malformed profile
 could otherwise direct privileged relabeling at critical system paths. Validation, deterministic
-command construction, transaction ordering, rollback, and recovery are therefore security
-boundaries.
+command construction, transaction ordering, rollback, and recovery are security boundaries.
 
 ## Recovery principles
 
-Microvisor must remove the profile-specific deny module before attempting recovery or relabeling.
-It must then restore file contexts and remove the base module. Never remove a base module while
-files still carry its custom types.
+Microvisor removes the profile-specific deny module before attempting recovery or relabeling. It
+then restores file contexts and removes the base module. Never remove a base module while files
+still carry its custom types.
 
-Until the new CLI and its recovery flow are implemented and tested in a disposable SELinux
-Enforcing VM, use the existing integration test only as evidence for the legacy helper—not as
-evidence that the target architecture is complete.
+Inspect state with:
+
+```bash
+sudo microvisor status
+sudo semodule -l | grep microvisor
+sudo semanage fcontext -l -C | grep microvisor
+```
+
+Use `microvisor remove <profile-id>` whenever the applied snapshot is intact. Manual recovery must
+preserve the same deny-module-first ordering described in the manual page and `AGENTS.md`.
+
+## Legacy 0.1 profiles
+
+Microvisor does not import the unreleased GUI version's per-user `profiles.json`. Automatically
+trusting mutable user configuration in a root process would cross the new privilege boundary.
+Recreate required profiles as reviewed, root-owned YAML files and validate them before applying.

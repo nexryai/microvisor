@@ -1,4 +1,4 @@
-use crate::model::ProtectionProfile;
+use crate::model::{PROFILE_SCHEMA_VERSION, ProtectionProfile};
 use anyhow::{Context, Result, bail};
 use std::path::{Component, Path};
 
@@ -15,6 +15,13 @@ const TYPE_PERMISSIONS: &[(&str, &str)] = &[
 ];
 
 pub fn validate_profile(profile: &ProtectionProfile) -> Result<()> {
+    if profile.schema_version != PROFILE_SCHEMA_VERSION {
+        bail!(
+            "Unsupported profile schema version {}; expected {}",
+            profile.schema_version,
+            PROFILE_SCHEMA_VERSION
+        );
+    }
     let name = profile.name.trim();
     if name.is_empty() {
         bail!("Application name is required");
@@ -30,6 +37,9 @@ pub fn validate_profile(profile: &ProtectionProfile) -> Result<()> {
     if profile.data_directories.is_empty() {
         bail!("At least one protected directory is required");
     }
+    if profile.data_directories.len() > 64 {
+        bail!("A profile cannot protect more than 64 directories");
+    }
 
     let mut directories = profile.data_directories.clone();
     directories.sort();
@@ -39,8 +49,8 @@ pub fn validate_profile(profile: &ProtectionProfile) -> Result<()> {
 
     for directory in &profile.data_directories {
         validate_absolute_path(directory, "protected directory")?;
-        // This inexpensive UI-side check is repeated after canonicalization in the helper. The
-        // helper-side result is authoritative because the GUI is not a security boundary.
+        // This inexpensive syntactic check is repeated after canonicalization by the privileged
+        // engine. The canonicalized result is authoritative at the root input boundary.
         if normal_component_count(directory) < 3 {
             bail!(
                 "{} is too broad to protect safely; select an application-specific subdirectory",
@@ -73,6 +83,9 @@ fn validate_absolute_path(path: &Path, label: &str) -> Result<()> {
     if value.chars().any(char::is_control) {
         bail!("The {label} path contains control characters");
     }
+    if value.len() > 4096 {
+        bail!("The {label} path must not exceed 4096 bytes");
+    }
     Ok(())
 }
 
@@ -83,6 +96,9 @@ fn normal_component_count(path: &Path) -> usize {
 }
 
 pub fn validate_selinux_identifier(value: &str) -> Result<()> {
+    if value.len() > 255 {
+        bail!("SELinux identifier must not exceed 255 bytes");
+    }
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
         bail!("SELinux identifier cannot be empty");
@@ -113,7 +129,7 @@ type {app_type};
 type {exec_type};
 application_domain({app_type}, {exec_type})
 
-# Keep the protected application compatible with an ordinary desktop session.
+# Keep the protected application compatible with an ordinary unconfined workload.
 # The companion CIL module subtracts access to {data_type} from every other type.
 unconfined_domain({app_type})
 domtrans_pattern({launch_domain}, {exec_type}, {app_type})

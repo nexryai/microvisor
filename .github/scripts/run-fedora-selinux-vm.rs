@@ -94,7 +94,7 @@ fn classify_cloud_init_exit(code: Option<i32>) -> CloudInitOutcome {
 
 struct Config {
     repository_root: PathBuf,
-    helper_path: PathBuf,
+    binary_path: PathBuf,
     image_name: String,
     image_url: OsString,
     image_sha256: String,
@@ -123,13 +123,13 @@ impl Config {
             ));
         }
 
-        let helper_path = env::var_os("INTEGRATION_HELPER_PATH")
+        let binary_path = env::var_os("INTEGRATION_BINARY_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 repository_root
                     .join("target")
                     .join("debug")
-                    .join("microvisor-helper")
+                    .join("microvisor")
             });
         let image_cache_directory = env::var_os("FEDORA_IMAGE_CACHE_DIRECTORY")
             .map(PathBuf::from)
@@ -147,7 +147,7 @@ impl Config {
 
         Ok(Self {
             repository_root,
-            helper_path,
+            binary_path,
             image_name,
             image_url: required_environment("FEDORA_IMAGE_URL")?,
             image_sha256: image_sha256.to_ascii_lowercase(),
@@ -323,10 +323,10 @@ fn run() -> Result<()> {
             .arg("."),
         "archive the Microvisor source",
     )?;
-    if !config.helper_path.is_file() {
+    if !config.binary_path.is_file() {
         return Err(CiError::Configuration(format!(
-            "the Fedora-built integration helper was not found: {}",
-            config.helper_path.display()
+            "the Fedora-built Microvisor CLI was not found: {}",
+            config.binary_path.display()
         )));
     }
 
@@ -337,17 +337,13 @@ fn run() -> Result<()> {
         &source_archive,
         "/home/runner/microvisor-source.tar.gz",
     )?;
-    copy_to_guest(
-        &ssh_key,
-        &config.helper_path,
-        "/home/runner/microvisor-helper",
-    )?;
+    copy_to_guest(&ssh_key, &config.binary_path, "/home/runner/microvisor-bin")?;
     run_ssh_checked(
         &ssh_key,
         "mkdir -p /home/runner/microvisor && \
          tar -xzf /home/runner/microvisor-source.tar.gz -C /home/runner/microvisor && \
-         chmod 0755 /home/runner/microvisor-helper",
-        "extract the source and prepare the helper in the guest",
+         chmod 0755 /home/runner/microvisor-bin",
+        "extract the source and prepare the CLI in the guest",
     )?;
 
     run_ssh_checked(
@@ -374,7 +370,7 @@ fn run() -> Result<()> {
          echo \"SELinux context: $(id -Z)\"
          sestatus
          cd /home/runner/microvisor
-         sudo bash tests/selinux-integration.sh /home/runner/microvisor-helper",
+         sudo bash tests/selinux-integration.sh /home/runner/microvisor-bin",
         "run the SELinux integration test",
     )?;
 

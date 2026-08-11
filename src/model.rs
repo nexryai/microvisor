@@ -2,8 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+pub const PROFILE_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProtectionProfile {
+    pub schema_version: u32,
     pub id: Uuid,
     pub name: String,
     pub executable: PathBuf,
@@ -12,12 +16,12 @@ pub struct ProtectionProfile {
     pub launch_role: String,
     pub block_ptrace: bool,
     pub block_fd_use: bool,
-    pub applied: bool,
 }
 
 impl ProtectionProfile {
     pub fn new() -> Self {
         Self {
+            schema_version: PROFILE_SCHEMA_VERSION,
             id: Uuid::new_v4(),
             name: String::new(),
             executable: PathBuf::new(),
@@ -26,7 +30,6 @@ impl ProtectionProfile {
             launch_role: "unconfined_r".into(),
             block_ptrace: true,
             block_fd_use: false,
-            applied: false,
         }
     }
 
@@ -63,19 +66,4 @@ pub struct PolicyIdentifiers {
     pub data_type: String,
     pub allowed_attribute: String,
     pub denied_attribute: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "operation", rename_all = "snake_case")]
-// This enum is the complete GUI-to-root protocol. Keep it narrow and consider backward
-// compatibility before changing any serialized field or variant.
-pub enum HelperRequest {
-    Apply { profile: ProtectionProfile },
-    Remove { id: Uuid },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HelperResponse {
-    pub ok: bool,
-    pub message: String,
 }

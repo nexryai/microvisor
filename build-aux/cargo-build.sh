@@ -18,4 +18,3 @@ else
 fi
 
 cp "$CARGO_TARGET_DIR/$cargo_profile/microvisor" "$builddir/microvisor"
-cp "$CARGO_TARGET_DIR/$cargo_profile/microvisor-helper" "$builddir/microvisor-helper"

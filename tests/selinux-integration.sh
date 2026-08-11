@@ -9,10 +9,10 @@ if (( EUID != 0 )); then
   exit 1
 fi
 
-helper_path=${1:-target/debug/microvisor-helper}
-helper_path=$(realpath "$helper_path")
-if [[ ! -x "$helper_path" ]]; then
-  echo "The helper is not executable: $helper_path" >&2
+microvisor_path=${1:-target/debug/microvisor}
+microvisor_path=$(realpath "$microvisor_path")
+if [[ ! -x "$microvisor_path" ]]; then
+  echo "The Microvisor CLI is not executable: $microvisor_path" >&2
   exit 1
 fi
 
@@ -28,12 +28,10 @@ test_root="/var/lib/microvisor-ci/$profile_id"
 executable="$test_root/bin/microvisor-ci-bash"
 data_directory="$test_root/data"
 secret_file="$data_directory/secret.txt"
+config_directory=/etc/microvisor/profiles.d
+config_file="$config_directory/integration.yaml"
 state_file="/var/lib/microvisor/profiles/$profile_id.json"
-request_directory=$(mktemp -d /run/microvisor-ci.XXXXXX)
-apply_request="$request_directory/apply.json"
-remove_request="$request_directory/remove.json"
-apply_response="$request_directory/apply-response.json"
-remove_response="$request_directory/remove-response.json"
+result_directory=$(mktemp -d /run/microvisor-ci.XXXXXX)
 executable_regex=$executable
 data_regex="${data_directory}(/.*)?"
 transaction_started=false
@@ -58,12 +56,10 @@ cleanup() {
   trap - EXIT
   set +e
 
-  # Prefer the helper's root-owned snapshot. The fallback preserves the required recovery order
-  # if the helper failed before committing that snapshot.
+  # Prefer the CLI's root-owned snapshot. The fallback preserves recovery order if application
+  # failed before the snapshot was committed.
   if [[ "$transaction_started" == true ]]; then
-    if [[ -f "$remove_request" ]]; then
-      "$helper_path" <"$remove_request" >/dev/null 2>&1
-    fi
+    "$microvisor_path" remove "$profile_id" >/dev/null 2>&1
     semodule -r "$deny_module" >/dev/null 2>&1
     semanage fcontext -d -f f "$executable_regex" >/dev/null 2>&1
     semanage fcontext -d "$data_regex" >/dev/null 2>&1
@@ -73,11 +69,12 @@ cleanup() {
     rm -f -- "$state_file"
   fi
 
+  rm -f -- "$config_file" "$config_file.disabled" "$config_directory"/count-*.yaml
   if [[ "$created_test_root" == true && "$test_root" == /var/lib/microvisor-ci/* ]]; then
     rm -rf -- "$test_root"
   fi
   rmdir /var/lib/microvisor-ci >/dev/null 2>&1
-  rm -rf -- "$request_directory"
+  rm -rf -- "$result_directory"
   exit "$status"
 }
 trap cleanup EXIT
@@ -88,40 +85,100 @@ trap cleanup EXIT
 ! module_present "$module"
 ! module_present "$deny_module"
 
-mkdir -p "$test_root/bin" "$data_directory"
+mkdir -p "$test_root/bin" "$data_directory" "$config_directory"
+chmod 0755 /etc/microvisor "$config_directory"
 created_test_root=true
 cp /usr/bin/bash "$executable"
 chmod 0755 "$executable"
 printf '%s\n' "microvisor-ci-secret" >"$secret_file"
 restorecon -RF "$test_root"
 
-cat >"$apply_request" <<EOF
-{
-  "operation": "apply",
-  "profile": {
-    "id": "$profile_id",
-    "name": "SELinux integration test",
-    "executable": "$executable",
-    "data_directories": ["$data_directory"],
-    "launch_domain": "unconfined_t",
-    "launch_role": "unconfined_r",
-    "block_ptrace": true,
-    "block_fd_use": false,
-    "applied": true
-  }
-}
+cat >"$config_file" <<EOF
+schema_version: 1
+id: $profile_id
+name: Rejected profile
+executable: $executable
+data_directories: [$data_directory]
+launch_domain: unconfined_t
+launch_role: unconfined_r
+block_ptrace: true
+block_fd_use: false
+unknown_root_field: rejected
 EOF
+chmod 0600 "$config_file"
+if "$microvisor_path" validate >"$result_directory/invalid.out" 2>"$result_directory/invalid.err"; then
+  echo "Configuration with an unknown field was unexpectedly accepted" >&2
+  exit 1
+fi
+! module_present "$module"
+! module_present "$deny_module"
+rm -f -- "$config_file"
 
-cat >"$remove_request" <<EOF
-{
-  "operation": "remove",
-  "id": "$profile_id"
-}
+ln -s "$result_directory/not-a-profile" "$config_file"
+if "$microvisor_path" validate >"$result_directory/symlink.out" 2>"$result_directory/symlink.err"; then
+  echo "Symlinked configuration was unexpectedly accepted" >&2
+  exit 1
+fi
+rm -f -- "$config_file"
+
+for index in $(seq 1 257); do
+  : >"$config_directory/count-$index.yaml"
+done
+if "$microvisor_path" validate >"$result_directory/count.out" 2>"$result_directory/count.err"; then
+  echo "More than 256 profiles were unexpectedly accepted" >&2
+  exit 1
+fi
+rm -f -- "$config_directory"/count-*.yaml
+
+head -c 1048577 /dev/zero >"$config_file"
+chmod 0600 "$config_file"
+if "$microvisor_path" validate >"$result_directory/oversized.out" 2>"$result_directory/oversized.err"; then
+  echo "An oversized configuration file was unexpectedly accepted" >&2
+  exit 1
+fi
+rm -f -- "$config_file"
+
+cat >"$config_file" <<EOF
+schema_version: 1
+id: $profile_id
+name: SELinux integration test
+executable: $executable
+data_directories:
+  - $data_directory
+launch_domain: unconfined_t
+launch_role: unconfined_r
+block_ptrace: true
+block_fd_use: false
 EOF
+chmod 0666 "$config_file"
+if "$microvisor_path" validate >"$result_directory/mode.out" 2>"$result_directory/mode.err"; then
+  echo "A group/world-writable configuration file was unexpectedly accepted" >&2
+  exit 1
+fi
+chmod 0600 "$config_file"
+
+"$microvisor_path" validate
+"$microvisor_path" render "$profile_id" >"$result_directory/rendered-policy.txt"
+grep -Fq "policy_module($module, 1.0)" "$result_directory/rendered-policy.txt"
+grep -Fq "(deny ${module}_denied_subjects $data_type (file (all)))" \
+  "$result_directory/rendered-policy.txt"
+if "$microvisor_path" status >"$result_directory/not-applied.status"; then
+  echo "Status unexpectedly reported convergence before apply" >&2
+  exit 1
+fi
+grep -Fq "$profile_id"$'\tnot-applied\t' "$result_directory/not-applied.status"
 
 transaction_started=true
-"$helper_path" <"$apply_request" >"$apply_response"
-grep -Fq '"ok":true' "$apply_response"
+"$microvisor_path" apply
+"$microvisor_path" apply | grep -Fq 'Applied 0 changed profile(s).'
+"$microvisor_path" status | grep -Fq "$profile_id"$'\tapplied\t'
+mv "$config_file" "$config_file.disabled"
+if "$microvisor_path" status >"$result_directory/missing-config.status"; then
+  echo "Status unexpectedly ignored an installed profile without YAML" >&2
+  exit 1
+fi
+grep -Fq "$profile_id"$'\tinstalled-without-config\t' "$result_directory/missing-config.status"
+mv "$config_file.disabled" "$config_file"
 
 module_present "$module"
 module_present "$deny_module"
@@ -132,11 +189,9 @@ module_present "$deny_module"
 fcontext_present "$executable_regex"
 fcontext_present "$data_regex"
 
-# The deny complement must remove allow rules for every filesystem object class. Other classes
-# can legitimately target a file type without granting access to the protected filesystem object.
 filesystem_classes=(dir file lnk_file chr_file blk_file sock_file fifo_file)
 for object_class in "${filesystem_classes[@]}"; do
-  unconfined_rules="$request_directory/unconfined-${object_class}.rules"
+  unconfined_rules="$result_directory/unconfined-${object_class}.rules"
   sesearch -A -s unconfined_t -t "$data_type" -c "$object_class" >"$unconfined_rules"
   if grep -q '^allow ' "$unconfined_rules"; then
     echo "unconfined_t unexpectedly retains $object_class access to $data_type" >&2
@@ -145,7 +200,7 @@ for object_class in "${filesystem_classes[@]}"; do
   fi
 done
 
-app_read_rules="$request_directory/app-data-file-read.rules"
+app_read_rules="$result_directory/app-data-file-read.rules"
 sesearch -A -s "$app_type" -t "$data_type" -c file -p read >"$app_read_rules"
 if ! grep -q '^allow ' "$app_read_rules"; then
   echo "$app_type unexpectedly lacks file read access to $data_type" >&2
@@ -153,22 +208,16 @@ if ! grep -q '^allow ' "$app_read_rules"; then
   exit 1
 fi
 
-# This shell remains unconfined_t and must be denied despite running as root.
-if /usr/bin/cat "$secret_file" >/dev/null 2>"$request_directory/direct-access.err"; then
+if /usr/bin/cat "$secret_file" >/dev/null 2>"$result_directory/direct-access.err"; then
   echo "Direct access from unconfined_t unexpectedly succeeded" >&2
   exit 1
 fi
 
-# Executing the labeled entrypoint transitions to the protected application type. Check the actual
-# xattr and file contents from that domain because unconfined_t cannot even stat the protected file.
-protected_type=$(
-  "$executable" -c 'stat -c %C "$1" | cut -d: -f3' -- "$secret_file"
-)
+protected_type=$("$executable" -c 'stat -c %C "$1" | cut -d: -f3' -- "$secret_file")
 [[ "$protected_type" == "$data_type" ]]
 [[ $("$executable" -c 'cat "$1"' -- "$secret_file") == microvisor-ci-secret ]]
 
-"$helper_path" <"$remove_request" >"$remove_response"
-grep -Fq '"ok":true' "$remove_response"
+"$microvisor_path" remove "$profile_id"
 
 ! module_present "$deny_module"
 ! module_present "$module"
@@ -180,4 +229,6 @@ grep -Fq '"ok":true' "$remove_response"
 [[ $(/usr/bin/cat "$secret_file") == microvisor-ci-secret ]]
 
 transaction_started=false
+rm -f -- "$config_file"
+"$microvisor_path" validate | grep -Fq 'Validated 0 profile(s).'
 echo "SELinux integration test passed."

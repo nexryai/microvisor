@@ -1,0 +1,65 @@
+.TH MICROVISOR 8 "August 2026" "Microvisor 0.1.0" "System Administration"
+.SH NAME
+microvisor \- manage YAML-defined SELinux application protection profiles
+.SH SYNOPSIS
+.B microvisor
+.RI { validate | apply | status | help | version }
+.br
+.B microvisor render
+.I profile-id
+.br
+.B microvisor remove
+.I profile-id
+.SH DESCRIPTION
+Microvisor is a short-lived, headless root command that generates and applies
+per-application SELinux policy. Desired profiles are read from regular YAML
+files below
+.IR /etc/microvisor/profiles.d .
+All commands except help and version require effective UID zero.
+.SH COMMANDS
+.TP
+.B validate
+Parse, normalize, and validate the complete desired configuration without
+changing SELinux state.
+.TP
+.BI "render " profile-id
+Print the deterministic policy and file-context operations for one profile.
+.TP
+.B apply
+Validate and reconcile every configured profile. Installed profiles whose YAML
+was removed are reported by status and are not silently removed.
+.TP
+.B status
+Compare desired configuration, root-owned applied snapshots, installed modules,
+and local file-context rules. Exit status 2 indicates drift.
+.TP
+.BI "remove " profile-id
+Remove an applied profile using its root-owned snapshot, restore labels, and
+delete its snapshot.
+.SH FILES
+.TP
+.I /etc/microvisor/profiles.d/*.yaml
+Root-owned desired profile configuration. Files and the directory must not be
+writable by group or other users. Symlinks and hard-linked files are rejected.
+.TP
+.I /var/lib/microvisor/profiles/*.json
+Root-only applied-state snapshots used for status, rollback, and recovery.
+.TP
+.I /run/microvisor/transaction.lock
+Root-only lock serializing all mutating transactions.
+.SH SECURITY
+YAML is treated as hostile input even though it is root-controlled. Microvisor
+rejects unsupported schema versions, unknown fields, YAML tags, anchors,
+aliases, merge keys, multiple documents, unsafe paths, and overlapping profiles.
+It invokes SELinux tools directly with argument arrays and never passes profile
+values through a shell.
+.SH RECOVERY
+Use
+.B microvisor remove
+with the profile UUID whenever the applied snapshot is available. Manual
+recovery must remove the profile-specific deny module first, delete the local
+file-context rules, run restorecon on the executable and protected directories,
+and only then remove the base module. Removing the base module while files still
+carry its custom types can leave orphaned labels.
+.SH EXIT STATUS
+Zero indicates success, 1 indicates an error, and 2 from status indicates drift.

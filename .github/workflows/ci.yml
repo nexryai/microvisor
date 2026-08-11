@@ -18,14 +18,16 @@ jobs:
       - name: Install dependencies
         run: |
           dnf install -y \
-            cargo rust rustfmt clippy meson ninja-build \
-            gtk4-devel libadwaita-devel glib2-devel \
-            libappstream-glib libxml2 policycoreutils-devel
+            cargo rust rustfmt clippy meson ninja-build
       - name: Format
         run: cargo fmt --check
-      - name: Test policy generator
-        run: cargo test --no-default-features
-      - name: Check GUI
-        run: cargo check --all-targets
-      - name: Validate metadata
-        run: appstream-util validate-relax data/me.nexryai.microvisor.metainfo.xml.in
+      - name: Test CLI and policy generator
+        run: cargo test --locked
+      - name: Check all targets
+        run: cargo check --all-targets --locked
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Build package layout
+        run: |
+          meson setup build
+          meson compile -C build

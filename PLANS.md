@@ -27,59 +27,59 @@ Accepted direction:
 - Server support means headless execution and automated lifecycle tests on named SELinux platforms;
   it does not mean policy portability is assumed.
 
-This supersedes the 0.1 GNOME/Libadwaita and Polkit-helper design. The existing implementation is
-legacy migration input, not a second supported frontend.
+This supersedes the 0.1 GNOME/Libadwaita and Polkit-helper design. That implementation is migration
+history, not a second supported frontend.
 
-## Legacy implementation inventory
+## CLI migration status
 
-The repository currently contains reusable policy and transaction work alongside components to be
-removed:
+The repository now uses the headless architecture:
 
-- Reuse and harden: deterministic TE/CIL generation, path and identifier validation, root UID check,
+- Reused and hardened: deterministic TE/CIL generation, path and identifier validation, root UID check,
   transaction lock, applied-profile snapshots, apply/update rollback attempt, label restoration,
   Enforcing-mode QEMU integration harness, and RPM groundwork.
-- Replace: per-user JSON profile storage and GUI-to-helper JSON requests with a versioned YAML
-  desired-state loader and a typed reconciliation plan.
-- Remove: GTK/Libadwaita UI, asynchronous GUI plumbing, `microvisor-helper`, Polkit policy, desktop
+- Replaced: per-user JSON profile storage and GUI-to-helper JSON requests with a versioned YAML
+  desired-state loader and typed full-set validation.
+- Removed: GTK/Libadwaita UI, asynchronous GUI plumbing, `microvisor-helper`, Polkit policy, desktop
   file, AppStream metadata, application icons, GUI build features, and desktop-only dependencies.
-- Rewrite: packaging, CI, diagnostics, integration tests, recovery documentation, and application
+- Rewritten: packaging, CI, diagnostics, integration tests, recovery documentation, and application
   discovery assumptions around the single CLI.
 
-The old helper must not be deleted until the CLI transaction path has equivalent deterministic and
-VM recovery coverage. It must not receive new features during the migration.
+The CLI unit and policy tests pass locally. The rewritten CLI transaction path must still pass the
+complete disposable-VM recovery matrix before this milestone exits.
 
 ## Milestone 0.2: CLI and YAML migration
 
 Priority: highest.
 
-- [ ] Define a versioned `schema_version: 1` YAML profile with UUID, display name, executable,
+- [x] Define a versioned `schema_version: 1` YAML profile with UUID, display name, executable,
   protected directories, launch domain/role, and explicit hardening booleans.
-- [ ] Select and review a YAML parser. Demonstrate rejection of duplicate keys, aliases, tags,
+- [x] Select and review a YAML parser. Demonstrate rejection of duplicate keys, aliases, tags,
   ambiguous coercions, unknown fields, unsupported versions, excessive nesting, oversized files,
   and excessive profile counts.
-- [ ] Load only regular root-owned configuration files that are not group- or world-writable; use
+- [x] Load only regular root-owned configuration files that are not group- or world-writable; use
   race-resistant no-follow opens and deterministic filename ordering.
-- [ ] Add `validate`, `render <id>`, `apply`, `status`, and `remove <id>` subcommands with stable exit
+- [x] Add `validate`, `render <id>`, `apply`, `status`, and `remove <id>` subcommands with stable exit
   codes. Reserve stdout for requested output and stderr for diagnostics.
-- [ ] Separate parsing, semantic validation, full-set conflict validation, policy rendering,
+- [x] Separate parsing, semantic validation, full-set conflict validation, policy rendering,
   reconciliation planning, and privileged execution.
 - [ ] Make `apply` validate all profiles and compile every generated module before the first host
   mutation.
-- [ ] Define explicit semantics for YAML deletion: report installed-but-undesired profiles and
+- [x] Define explicit semantics for YAML deletion: report installed-but-undesired profiles and
   require a documented removal or prune operation rather than silently changing protection.
-- [ ] Fold the helper's allowlisted command execution, locking, state, apply, rollback, removal, and
+- [x] Fold the helper's allowlisted command execution, locking, state, apply, rollback, removal, and
   recovery logic into the CLI.
-- [ ] Make apply idempotent and detect desired/applied/observed drift.
-- [ ] Atomically persist schema-versioned applied snapshots independently from YAML desired state.
-- [ ] Replace JSON helper integration tests with CLI tests covering valid and invalid YAML,
-  rendering, reconciliation, status, removal, interruption, rollback, and recovery.
-- [ ] Remove GTK, Libadwaita, GLib/GIO, async GUI, directory-discovery, JSON-protocol, and Polkit
+- [x] Make apply idempotent and detect desired/applied/observed drift.
+- [x] Atomically persist schema-versioned applied snapshots independently from YAML desired state.
+- [x] Replace JSON helper integration tests with CLI tests covering valid and invalid YAML,
+  rendering, reconciliation, status, idempotent apply, denial, removal, and recovery ordering.
+- [ ] Add deterministic interruption and rollback coverage for every transaction stage.
+- [x] Remove GTK, Libadwaita, GLib/GIO, async GUI, directory-discovery, JSON-protocol, and Polkit
   dependencies that are no longer used.
-- [ ] Remove the GUI sources, helper binary, icons, resources, desktop file, AppStream metadata, and
+- [x] Remove the GUI sources, helper binary, icons, resources, desktop file, AppStream metadata, and
   Polkit action after replacement tests pass.
-- [ ] Rewrite Meson/RPM installation for a headless binary, configuration directory, manual page,
+- [x] Rewrite Meson/RPM installation for a headless binary, configuration directory, manual page,
   shell completions if generated deterministically, and root state/runtime directories.
-- [ ] Add a migration note for users of the unreleased 0.1 JSON profiles; do not auto-import mutable
+- [x] Add a migration note for users of the unreleased 0.1 JSON profiles; do not auto-import mutable
   per-user configuration as root.
 
 Exit criteria:
@@ -129,7 +129,7 @@ Exit criteria:
 - [ ] Test service launch domains and systemd-managed workloads in addition to interactive desktop
   applications.
 - [ ] Define log rotation, audit retention, and integration with the system journal.
-- [ ] Add a manual page covering configuration ownership, deployment, status, rollback, and
+- [x] Add a manual page covering configuration ownership, deployment, status, rollback, and
   emergency recovery.
 
 Exit criteria:
