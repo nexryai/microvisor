@@ -24,6 +24,8 @@ Accepted direction:
 - Mutations are serialized with a lock under `/run/microvisor/`.
 - No GUI, desktop integration, Polkit action, helper protocol, daemon, or network service is part of
   the target architecture.
+- Cargo is the only source-build entry point. Runtime policy compilation invokes the installed
+  reference-policy M4 sources, `checkmodule`, and `semodule_package` directly without Make or Meson.
 - Server support means headless execution and automated lifecycle tests on named SELinux platforms;
   it does not mean policy portability is assumed.
 
@@ -74,7 +76,7 @@ Priority: highest.
   codes. Reserve stdout for requested output and stderr for diagnostics.
 - [x] Separate parsing, semantic validation, full-set conflict validation, policy rendering,
   reconciliation planning, and privileged execution.
-- [ ] Make `apply` validate all profiles and compile every generated module before the first host
+- [x] Make `apply` validate all profiles and compile every generated module before the first host
   mutation.
 - [x] Define explicit semantics for YAML deletion: report installed-but-undesired profiles and
   require a documented removal or prune operation rather than silently changing protection.
@@ -89,8 +91,8 @@ Priority: highest.
   dependencies that are no longer used.
 - [x] Remove the GUI sources, helper binary, icons, resources, desktop file, AppStream metadata, and
   Polkit action after replacement tests pass.
-- [x] Rewrite Meson/RPM installation for a headless binary, configuration directory, manual page,
-  shell completions if generated deterministically, and root state/runtime directories.
+- [x] Remove Meson, Ninja, Makefile execution, and build wrappers. Build only with Cargo and let the
+  RPM spec install the binary, manual page, and configuration directory directly.
 - [x] Add a migration note for users of the unreleased 0.1 JSON profiles; do not auto-import mutable
   per-user configuration as root.
 

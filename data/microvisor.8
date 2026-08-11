@@ -53,6 +53,9 @@ rejects unsupported schema versions, unknown fields, YAML tags, anchors,
 aliases, merge keys, multiple documents, unsafe paths, and overlapping profiles.
 It invokes SELinux tools directly with argument arrays and never passes profile
 values through a shell.
+Type-enforcement modules are compiled by invoking m4, checkmodule, and
+semodule_package directly against root-owned reference-policy sources. No shell,
+Makefile, or general-purpose build system is executed.
 .SH RECOVERY
 Use
 .B microvisor remove

@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           dnf install -y \
-            cargo rust rustfmt clippy meson ninja-build
+            cargo rust rustfmt clippy
       - name: Format
         run: cargo fmt --check
       - name: Test CLI and policy generator
@@ -27,7 +27,17 @@ jobs:
         run: cargo check --all-targets --locked
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Build package layout
+      - name: Build release binary
+        run: cargo build --release --locked
+      - name: Check package layout
         run: |
-          meson setup build
-          meson compile -C build
+          install_root="${RUNNER_TEMP}/microvisor-install"
+          install -Dpm 0755 target/release/microvisor \
+            "${install_root}/usr/bin/microvisor"
+          install -Dpm 0644 data/microvisor.8 \
+            "${install_root}/usr/share/man/man8/microvisor.8"
+          install -d -m 0755 \
+            "${install_root}/etc/microvisor/profiles.d"
+          test -x "${install_root}/usr/bin/microvisor"
+          test -f "${install_root}/usr/share/man/man8/microvisor.8"
+          test -d "${install_root}/etc/microvisor/profiles.d"

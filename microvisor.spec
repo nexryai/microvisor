@@ -18,16 +18,14 @@ ExclusiveArch:  %{rust_arches}
 
 BuildRequires:  cargo >= 1.85
 BuildRequires:  cargo-rpm-macros >= 26
-BuildRequires:  meson >= 1.3
-BuildRequires:  ninja-build
 BuildRequires:  rust >= 1.85
 
 Requires:       checkpolicy
 Requires:       libselinux-utils >= 3.6
-Requires:       make
+Requires:       m4
 Requires:       policycoreutils >= 3.6
 Requires:       policycoreutils-python-utils >= 3.6
-Requires:       /usr/share/selinux/devel/Makefile
+Requires:       /usr/share/selinux/devel/include/build.conf
 
 %description
 Microvisor is a headless root command-line tool that reconciles versioned YAML
@@ -46,15 +44,16 @@ export CARGO_HOME="$PWD/.cargo"
 export CARGO_NET_OFFLINE=true
 export RUSTFLAGS="%{build_rustflags}"
 
-%meson
-%meson_build
+cargo build --release --locked
 
 %cargo_license_summary
 %{cargo_license} > LICENSE.dependencies
 %cargo_vendor_manifest
 
 %install
-%meson_install
+install -Dpm 0755 target/release/microvisor %{buildroot}%{_bindir}/microvisor
+install -Dpm 0644 data/microvisor.8 %{buildroot}%{_mandir}/man8/microvisor.8
+install -d -m 0755 %{buildroot}%{_sysconfdir}/microvisor/profiles.d
 
 %if %{with check}
 %check
@@ -62,7 +61,7 @@ export CARGO_HOME="$PWD/.cargo"
 export CARGO_NET_OFFLINE=true
 export RUSTFLAGS="%{build_rustflags}"
 
-%cargo_test -n
+cargo test --release --locked
 %endif
 
 %files

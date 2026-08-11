@@ -36,7 +36,7 @@ an explicitly designated production target. Do not use a production host for dev
 - `tests/selinux-integration.sh`: CLI reconciliation and recovery coverage in a disposable SELinux
   Enforcing Fedora VM.
 - `.github/scripts/run-fedora-selinux-vm.rs`: QEMU lifecycle and guest provisioning for CI.
-- `.github/workflows/ci.yml`: fast headless build, unit, lint, and package-layout checks.
+- `.github/workflows/ci.yml`: Cargo build, unit, lint, and package-layout checks.
 - `.github/workflows/selinux-integration.yml`: destructive Enforcing-mode integration tests.
 - `data/microvisor.8`: installed command, configuration, exit-status, and recovery reference.
 - `PLANS.md`: roadmap and decisions not yet implemented.
@@ -96,12 +96,14 @@ cargo fmt --check
 cargo test --locked
 cargo check --all-targets --locked
 cargo clippy --all-targets --locked -- -D warnings
-meson setup build --wipe
-meson compile -C build
+cargo build --release --locked
 ```
 
+Cargo is the only source-build entry point. Do not add Make, Meson, Ninja, or a wrapper build system.
 The default feature set must build the headless CLI and must not link GTK or Libadwaita. Packaging
 checks must verify that no desktop, AppStream, icon-cache, helper, or Polkit artifacts are installed.
+Runtime policy compilation invokes `m4`, `checkmodule`, and `semodule_package` directly; do not
+restore an external Makefile execution path.
 
 For SELinux integration changes, test in a disposable Fedora VM with Enforcing mode enabled. At
 minimum verify the following in CI. Do not run these privileged integration steps in a development
@@ -183,6 +185,8 @@ After editing:
 - Using root anywhere in a development environment, including local VMs or containers. Privileged
   testing belongs in CI's disposable integration VM; root execution on designated production
   systems is permitted for deployment and operation only.
+- Reintroducing Make, Meson, Ninja, or another wrapper around Cargo, or invoking the SELinux
+  reference-policy Makefile at runtime.
 - Retaining the GUI or helper as a second supported architecture.
 - Loading configuration from a non-root user's home directory or environment variables.
 - Passing arbitrary command strings to a shell.

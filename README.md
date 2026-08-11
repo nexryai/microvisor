@@ -31,8 +31,8 @@ The initial target is Fedora 44 Server and Workstation with SELinux Enforcing an
 
 - Rust 1.85 or newer for building;
 - SELinux userspace 3.6 or newer, because Microvisor relies on CIL `deny` rules;
-- `policycoreutils`, `policycoreutils-python-utils`, `libselinux-utils`, `checkpolicy`, and the
-  reference-policy development Makefile from `selinux-policy-devel`.
+- `policycoreutils`, `policycoreutils-python-utils`, `libselinux-utils`, `checkpolicy`, `m4`, and the
+  reference-policy headers from `selinux-policy-devel`.
 
 GTK, Libadwaita, a display server, a desktop environment, and Polkit are not required. Server
 support means headless operation on explicitly tested SELinux distributions; it does not imply
@@ -42,9 +42,9 @@ CI container provisioning example (the CI container runs as root):
 
 ```bash
 dnf install \
-  cargo rust meson ninja-build \
+  cargo rust \
   policycoreutils policycoreutils-python-utils \
-  libselinux-utils selinux-policy-devel checkpolicy
+  libselinux-utils selinux-policy-devel checkpolicy m4
 ```
 
 Provision equivalent dependencies before entering a local development environment. Development
@@ -58,14 +58,17 @@ allowed on a designated production target for installation and normal Microvisor
 Build as an unprivileged user:
 
 ```bash
-meson setup build
-meson compile -C build
+cargo build --release --locked
 ```
 
-Install only on a designated production target (or in CI packaging tests):
+The project has no Makefile or Meson layer. Cargo is the only source-build entry point.
+
+Install only on a designated production target (or use the RPM package):
 
 ```bash
-sudo meson install -C build
+sudo install -Dpm 0755 target/release/microvisor /usr/local/bin/microvisor
+sudo install -Dpm 0644 data/microvisor.8 /usr/local/share/man/man8/microvisor.8
+sudo install -d -m 0755 /etc/microvisor/profiles.d
 ```
 
 This installs the CLI, its manual page, and `/etc/microvisor/profiles.d/`. It does not install a
@@ -90,9 +93,8 @@ block_fd_use: true
 ```
 
 On a designated production target, configuration files must be regular, root-owned, have exactly
-one hard link, and not be writable by
-group or other users. The configuration directory must also be root-owned, non-writable by group or
-other users, and not a symlink. A typical setup is:
+one hard link, and not be writable by group or other users. The configuration directory must also
+be root-owned, non-writable by group or other users, and not a symlink. A typical setup is:
 
 ```bash
 sudo install -d -m 0755 /etc/microvisor/profiles.d

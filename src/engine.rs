@@ -3,11 +3,11 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     os::fd::AsRawFd,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -16,7 +16,10 @@ pub const STATE_DIR: &str = "/var/lib/microvisor/profiles";
 const STATE_ROOT: &str = "/var/lib/microvisor";
 const RUNTIME_DIR: &str = "/run/microvisor";
 const LOCK_FILE: &str = "/run/microvisor/transaction.lock";
-const POLICY_MAKEFILE: &str = "/usr/share/selinux/devel/Makefile";
+const POLICY_INCLUDE_DIR: &str = "/usr/share/selinux/devel/include";
+const MAX_POLICY_SOURCE_FILES: usize = 4096;
+const MAX_POLICY_SOURCE_SIZE: u64 = 4 * 1024 * 1024;
+const MAX_GENERATED_POLICY_SIZE: u64 = 64 * 1024 * 1024;
 const MAX_STATE_SIZE: usize = 1024 * 1024;
 const STATE_SCHEMA_VERSION: u32 = 1;
 const TRUSTED_COMMAND_DIRS: &[&str] = &["/usr/sbin", "/usr/bin", "/sbin", "/bin"];
@@ -190,19 +193,19 @@ fn acquire_transaction_lock() -> Result<File> {
 fn ensure_environment() -> Result<()> {
     diagnostics::debug("cli", format_args!("checking the SELinux environment"));
     for command in [
+        "checkmodule",
         "getenforce",
-        "make",
+        "m4",
         "restorecon",
         "rpm",
         "semanage",
         "semodule",
+        "semodule_package",
     ] {
         find_command(command)
             .with_context(|| format!("Required command '{command}' is not installed"))?;
     }
-    if !Path::new(POLICY_MAKEFILE).is_file() {
-        bail!("SELinux policy development files are missing: {POLICY_MAKEFILE}");
-    }
+    policy_source_files()?;
 
     ensure_selinux_userspace_version()?;
 
@@ -295,6 +298,350 @@ fn parse_major_minor(token: &str) -> Option<(u32, u32)> {
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
     Some((major, minor))
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct PolicyBuildConfig {
+    policy_type: String,
+    distribution: Option<String>,
+    direct_initrc: bool,
+    ubac: bool,
+    mls_sensitivities: u32,
+    mls_categories: u32,
+    mcs_categories: u32,
+}
+
+impl Default for PolicyBuildConfig {
+    fn default() -> Self {
+        Self {
+            policy_type: "standard".into(),
+            distribution: None,
+            direct_initrc: false,
+            ubac: false,
+            mls_sensitivities: 16,
+            mls_categories: 1024,
+            mcs_categories: 1024,
+        }
+    }
+}
+
+impl PolicyBuildConfig {
+    fn uses_mls_symbols(&self) -> bool {
+        matches!(self.policy_type.as_str(), "mcs" | "mls")
+    }
+
+    fn m4_arguments(&self) -> Vec<String> {
+        let mut arguments = Vec::new();
+        match self.policy_type.as_str() {
+            "mcs" => arguments.extend(["-D".into(), "enable_mcs".into()]),
+            "mls" => arguments.extend(["-D".into(), "enable_mls".into()]),
+            _ => {}
+        }
+        if let Some(distribution) = &self.distribution {
+            arguments.extend(["-D".into(), format!("distro_{distribution}")]);
+        }
+        if self.direct_initrc {
+            arguments.extend(["-D".into(), "direct_sysadm_daemon".into()]);
+        }
+        if self.ubac {
+            arguments.extend(["-D".into(), "enable_ubac".into()]);
+        }
+        arguments.extend([
+            "-D".into(),
+            "hide_broken_symptoms".into(),
+            "-D".into(),
+            format!("mls_num_sens={}", self.mls_sensitivities),
+            "-D".into(),
+            format!("mls_num_cats={}", self.mls_categories),
+            "-D".into(),
+            format!("mcs_num_cats={}", self.mcs_categories),
+        ]);
+        arguments
+    }
+}
+
+struct PolicySources {
+    support: Vec<PathBuf>,
+    interfaces: Vec<PathBuf>,
+    build_config: PathBuf,
+}
+
+fn policy_source_files() -> Result<PolicySources> {
+    // M4 sources influence the policy loaded by a root process, so they are executable input in
+    // the security model. Accept only bounded files below the root-controlled package tree.
+    let include = Path::new(POLICY_INCLUDE_DIR);
+    validate_policy_directory(include)?;
+
+    let support_directory = include.join("support");
+    validate_policy_directory(&support_directory)?;
+    let support = collect_policy_files(&support_directory, "spt")?;
+    if support.is_empty() {
+        bail!("No SELinux reference-policy support files were found");
+    }
+
+    let mut interfaces = Vec::new();
+    let mut layers = fs::read_dir(include)?.collect::<io::Result<Vec<_>>>()?;
+    layers.sort_by_key(|entry| entry.file_name());
+    for layer in layers {
+        if layer.file_name() == "support" {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(layer.path())?;
+        if !metadata.is_dir() {
+            continue;
+        }
+        validate_policy_directory(&layer.path())?;
+        interfaces.extend(collect_policy_files(&layer.path(), "if")?);
+    }
+    if interfaces.is_empty() {
+        bail!("No SELinux reference-policy interfaces were found");
+    }
+    if support.len() + interfaces.len() > MAX_POLICY_SOURCE_FILES {
+        bail!("The SELinux reference-policy source set is unexpectedly large");
+    }
+
+    let build_config = include.join("build.conf");
+    validate_policy_file(&build_config)?;
+    Ok(PolicySources {
+        support,
+        interfaces,
+        build_config,
+    })
+}
+
+fn collect_policy_files(directory: &Path, extension: &str) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some(extension) {
+            continue;
+        }
+        validate_policy_file(&path)?;
+        files.push(path);
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn validate_policy_directory(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).with_context(|| {
+        format!(
+            "Could not inspect SELinux policy directory {}",
+            path.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+    {
+        bail!(
+            "SELinux policy directory {} must be root-owned and not writable by group or other users",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_policy_file(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Could not inspect SELinux policy source {}", path.display()))?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+        || metadata.len() > MAX_POLICY_SOURCE_SIZE
+    {
+        bail!(
+            "SELinux policy source {} has unsafe ownership, mode, type, or size",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn read_policy_build_config(path: &Path) -> Result<PolicyBuildConfig> {
+    let text = fs::read_to_string(path).with_context(|| {
+        format!(
+            "Could not read SELinux build configuration {}",
+            path.display()
+        )
+    })?;
+    parse_policy_build_config(&text)
+}
+
+fn parse_policy_build_config(text: &str) -> Result<PolicyBuildConfig> {
+    let mut config = PolicyBuildConfig::default();
+    for original_line in text.lines() {
+        let mut line = original_line.split('#').next().unwrap_or_default().trim();
+        if let Some(rest) = line.strip_prefix("override ") {
+            line = rest.trim_start();
+        }
+        if line.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = split_make_assignment(line) else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "TYPE" => {
+                if !matches!(value, "standard" | "mcs" | "mls") {
+                    bail!("Unsupported SELinux policy type '{value}'");
+                }
+                config.policy_type = value.into();
+            }
+            "DISTRO" => {
+                validate_build_token(value, "SELinux policy distribution")?;
+                config.distribution = (!value.is_empty()).then(|| value.to_owned());
+            }
+            "DIRECT_INITRC" => config.direct_initrc = parse_yes_no(value, key)?,
+            "UBAC" => config.ubac = parse_yes_no(value, key)?,
+            "MLS_SENS" => config.mls_sensitivities = parse_build_number(value, key)?,
+            "MLS_CATS" => config.mls_categories = parse_build_number(value, key)?,
+            "MCS_CATS" => config.mcs_categories = parse_build_number(value, key)?,
+            _ => {}
+        }
+    }
+    Ok(config)
+}
+
+fn split_make_assignment(line: &str) -> Option<(&str, &str)> {
+    for operator in [":=", "?=", "="] {
+        if let Some((key, value)) = line.split_once(operator) {
+            return Some((key, value));
+        }
+    }
+    None
+}
+
+fn validate_build_token(value: &str, label: &str) -> Result<()> {
+    if value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        bail!("{label} contains unsupported characters");
+    }
+    Ok(())
+}
+
+fn parse_yes_no(value: &str, key: &str) -> Result<bool> {
+    match value {
+        "y" => Ok(true),
+        "n" => Ok(false),
+        _ => bail!("SELinux build setting {key} must be 'y' or 'n'"),
+    }
+}
+
+fn parse_build_number(value: &str, key: &str) -> Result<u32> {
+    let number = value
+        .parse::<u32>()
+        .with_context(|| format!("SELinux build setting {key} must be a number"))?;
+    if number == 0 || number > 65_536 {
+        bail!("SELinux build setting {key} is outside the supported range");
+    }
+    Ok(number)
+}
+
+fn compile_type_enforcement(work: &Path, module: &str) -> Result<()> {
+    // Reproduce the reference-policy compiler stages with explicit argv and private files. Keeping
+    // each stage here avoids executing Make or a shell while preserving the installed interfaces.
+    let sources = policy_source_files()?;
+    let config = read_policy_build_config(&sources.build_config)?;
+    let interface_error = work.join("iferror.m4");
+    write_private_file(&interface_error, b"ifdef(`__if_error',`m4exit(1)')\n")?;
+
+    let raw_interfaces = work.join("all_interfaces.raw");
+    let mut m4 = trusted_command("m4")?;
+    m4.args(&sources.support)
+        .args(&sources.interfaces)
+        .arg(&interface_error);
+    checked_to_file(&mut m4, &raw_interfaces)
+        .context("Could not expand SELinux reference-policy interfaces")?;
+    let expanded_interfaces = read_bounded_generated_file(&raw_interfaces)?;
+    let expanded_interfaces = String::from_utf8(expanded_interfaces)
+        .context("SELinux reference-policy interfaces are not valid UTF-8")?
+        .replace("dollarsstar", "$*");
+    let all_interfaces = work.join("all_interfaces.conf");
+    write_private_file(
+        &all_interfaces,
+        format!("divert(-1)\n{expanded_interfaces}\ndivert\n").as_bytes(),
+    )?;
+
+    let te = work.join(format!("{module}.te"));
+    let expanded_te = work.join(format!("{module}.expanded"));
+    let mut m4 = trusted_command("m4")?;
+    m4.args(config.m4_arguments())
+        .arg("-s")
+        .args(&sources.support)
+        .arg(&all_interfaces)
+        .arg(&te);
+    checked_to_file(&mut m4, &expanded_te)
+        .context("Could not expand the SELinux type-enforcement module")?;
+
+    let module_file = work.join(format!("{module}.mod"));
+    let mut checkmodule = trusted_command("checkmodule")?;
+    checkmodule.arg("-m");
+    if config.uses_mls_symbols() {
+        checkmodule.arg("-M");
+    }
+    checked(checkmodule.arg(&expanded_te).arg("-o").arg(&module_file))
+        .context("Could not compile the SELinux type-enforcement module")?;
+
+    let package = work.join(format!("{module}.pp"));
+    let mut semodule_package = trusted_command("semodule_package")?;
+    checked(
+        semodule_package
+            .arg("-o")
+            .arg(package)
+            .arg("-m")
+            .arg(module_file),
+    )
+    .context("Could not package the SELinux type-enforcement module")?;
+    Ok(())
+}
+
+fn checked_to_file(command: &mut Command, path: &Path) -> Result<()> {
+    let output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)?;
+    command.stdout(Stdio::from(output));
+    checked(command)?;
+    let metadata = fs::metadata(path)?;
+    if metadata.len() > MAX_GENERATED_POLICY_SIZE {
+        bail!("Generated SELinux policy exceeds the 64 MiB safety limit");
+    }
+    Ok(())
+}
+
+fn read_bounded_generated_file(path: &Path) -> Result<Vec<u8>> {
+    let mut file = File::open(path)?;
+    let mut data = Vec::new();
+    Read::by_ref(&mut file)
+        .take(MAX_GENERATED_POLICY_SIZE + 1)
+        .read_to_end(&mut data)?;
+    if data.len() as u64 > MAX_GENERATED_POLICY_SIZE {
+        bail!("Generated SELinux policy exceeds the 64 MiB safety limit");
+    }
+    Ok(data)
+}
+
+fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 fn apply_prepared_transaction(
@@ -699,14 +1046,7 @@ impl PreparedProfile {
             policy::render_deny_cil(&profile)?,
         )?;
 
-        let mut make = trusted_command("make")?;
-        checked(
-            make.current_dir(work.path())
-                .arg("-f")
-                .arg(POLICY_MAKEFILE)
-                .arg(format!("{}.pp", ids.module)),
-        )
-        .context("Could not compile the SELinux type-enforcement module")?;
+        compile_type_enforcement(work.path(), &ids.module)?;
         diagnostics::debug("cli.apply", format_args!("compiled module {}", ids.module));
         Ok(Self { profile, work })
     }
@@ -1038,7 +1378,8 @@ fn find_command(command: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppliedState, STATE_SCHEMA_VERSION, deserialize_state, parse_major_minor, validate_profiles,
+        AppliedState, PolicyBuildConfig, STATE_SCHEMA_VERSION, deserialize_state,
+        parse_major_minor, parse_policy_build_config, validate_profiles,
     };
     use crate::model::ProtectionProfile;
     use std::{
@@ -1059,6 +1400,45 @@ mod tests {
     fn rejects_non_version_tokens() {
         assert_eq!(parse_major_minor("libsepol"), None);
         assert_eq!(parse_major_minor("3"), None);
+    }
+
+    #[test]
+    fn parses_reference_policy_build_settings_without_make() {
+        let config = parse_policy_build_config(
+            r#"
+                TYPE ?= mcs
+                DISTRO ?= redhat
+                DIRECT_INITRC ?= n
+                override UBAC := n
+                override MLS_SENS := 16
+                override MLS_CATS := 1024
+                override MCS_CATS := 2048
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config,
+            PolicyBuildConfig {
+                policy_type: "mcs".into(),
+                distribution: Some("redhat".into()),
+                direct_initrc: false,
+                ubac: false,
+                mls_sensitivities: 16,
+                mls_categories: 1024,
+                mcs_categories: 2048,
+            }
+        );
+        assert!(config.uses_mls_symbols());
+        assert!(config.m4_arguments().contains(&"enable_mcs".into()));
+        assert!(config.m4_arguments().contains(&"distro_redhat".into()));
+    }
+
+    #[test]
+    fn rejects_unsafe_reference_policy_build_settings() {
+        assert!(parse_policy_build_config("DISTRO ?= redhat;touch_bad").is_err());
+        assert!(parse_policy_build_config("TYPE ?= unexpected").is_err());
+        assert!(parse_policy_build_config("MCS_CATS ?= 0").is_err());
+        assert!(parse_policy_build_config("UBAC ?= maybe").is_err());
     }
 
     #[test]

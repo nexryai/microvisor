@@ -351,7 +351,7 @@ fn run() -> Result<()> {
         "sudo dnf install -y \
          checkpolicy \
          libselinux-utils \
-         make \
+         m4 \
          policycoreutils \
          policycoreutils-python-utils \
          selinux-policy-devel \
