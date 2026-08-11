@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           dnf install -y \
-            cargo rust rustfmt clippy
+            cargo cargo-rpm-macros clippy git-core make rpm-build rust rustfmt tar xz
       - name: Format
         run: cargo fmt --check
       - name: Test CLI and policy generator
@@ -41,3 +41,18 @@ jobs:
           test -x "${install_root}/usr/bin/microvisor"
           test -f "${install_root}/usr/share/man/man8/microvisor.8"
           test -d "${install_root}/etc/microvisor/profiles.d"
+      - name: Build COPR source RPM
+        run: |
+          srpm_directory="${RUNNER_TEMP}/microvisor-srpm"
+          make -f .copr/Makefile srpm \
+            outdir="${srpm_directory}" \
+            spec=microvisor.spec
+          mapfile -t srpms < <(find "${srpm_directory}" -maxdepth 1 -type f -name '*.src.rpm')
+          test "${#srpms[@]}" -eq 1
+          package_name=$(rpm -qp --qf '%{NAME}' "${srpms[0]}")
+          package_version=$(rpm -qp --qf '%{VERSION}' "${srpms[0]}")
+          rpm -qpl "${srpms[0]}" | grep -Fx \
+            "${package_name}-${package_version}.tar.xz"
+          rpm -qpl "${srpms[0]}" | grep -Fx \
+            "${package_name}-${package_version}-vendor.tar.xz"
+          rpm -qpl "${srpms[0]}" | grep -Fx microvisor.spec

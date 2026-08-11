@@ -74,6 +74,38 @@ sudo install -d -m 0755 /etc/microvisor/profiles.d
 This installs the CLI, its manual page, and `/etc/microvisor/profiles.d/`. It does not install a
 daemon or enable automatic policy mutation at boot.
 
+## COPR packaging
+
+COPR's SCM `make_srpm` method is supported by the dedicated [.copr/Makefile](.copr/Makefile). It
+archives the checked-out Git commit, vendors the exact `Cargo.lock` dependency set, and writes one
+SRPM to COPR's requested `outdir`. This Makefile is packaging-only; normal source builds continue to
+use Cargo directly.
+
+Register the Git repository once and trigger a build with a configured `copr-cli`:
+
+```bash
+copr-cli add-package-scm OWNER/PROJECT \
+  --name microvisor \
+  --clone-url https://github.com/nexryai/microvisor.git \
+  --spec microvisor.spec \
+  --method make_srpm
+copr-cli build-package OWNER/PROJECT --name microvisor --enable-net on
+```
+
+COPR invokes `.copr/Makefile` itself and uploads the resulting SRPM into the selected project. To
+build and upload an SRPM manually instead:
+
+```bash
+make -f .copr/Makefile srpm outdir="$PWD" spec=microvisor.spec
+copr-cli build OWNER/PROJECT ./microvisor-*.src.rpm
+```
+
+The SCM source-build step needs network access to download the locked Cargo crates before placing
+them in `Source1`; the binary RPM build itself uses that vendored archive offline. Local SRPM
+generation runs without root when `cargo`, `cargo-rpm-macros`, `git`, `make`, `rpmbuild`, `rpmspec`,
+`tar`, and `xz` are already installed. Dependency installation with root is limited to COPR's
+disposable source-build environment.
+
 ## YAML configuration
 
 Create an editable template without root privileges:

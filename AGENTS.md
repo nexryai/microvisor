@@ -39,6 +39,7 @@ an explicitly designated production target. Do not use a production host for dev
 - `.github/scripts/run-fedora-selinux-vm.rs`: QEMU lifecycle and guest provisioning for CI.
 - `.github/workflows/ci.yml`: Cargo build, unit, lint, and package-layout checks.
 - `.github/workflows/selinux-integration.yml`: destructive Enforcing-mode integration tests.
+- `.copr/Makefile`: COPR SCM `make_srpm` adapter; source/vendor archives and SRPM assembly only.
 - `data/microvisor.8`: installed command, configuration, exit-status, and recovery reference.
 - `PLANS.md`: roadmap and decisions not yet implemented.
 
@@ -107,11 +108,20 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
 
-Cargo is the only source-build entry point. Do not add Make, Meson, Ninja, or a wrapper build system.
+Cargo is the only source-build entry point. `.copr/Makefile` is the sole exception: it may package
+the checked-out Cargo sources into an SRPM but must not become an application build frontend. Do not
+add Meson, Ninja, a top-level Makefile, or another wrapper build system.
 The default feature set must build the headless CLI and must not link GTK or Libadwaita. Packaging
 checks must verify that no desktop, AppStream, icon-cache, helper, or Polkit artifacts are installed.
 Runtime policy compilation invokes `m4`, `checkmodule`, and `semodule_package` directly; do not
 restore an external Makefile execution path.
+
+For COPR packaging changes, also run this without root and inspect the resulting source list:
+
+```bash
+make -f .copr/Makefile srpm outdir=/tmp/microvisor-srpm spec=microvisor.spec
+rpm -qpl /tmp/microvisor-srpm/*.src.rpm
+```
 
 For SELinux integration changes, test in a disposable Fedora VM with Enforcing mode enabled. At
 minimum verify the following in CI. Do not run these privileged integration steps in a development
@@ -193,8 +203,9 @@ After editing:
 - Using root anywhere in a development environment, including local VMs or containers. Privileged
   testing belongs in CI's disposable integration VM; root execution on designated production
   systems is permitted for deployment and operation only.
-- Reintroducing Make, Meson, Ninja, or another wrapper around Cargo, or invoking the SELinux
-  reference-policy Makefile at runtime.
+- Reintroducing a top-level Makefile, Meson, Ninja, or another wrapper around Cargo; expanding the
+  COPR-only Makefile beyond SRPM assembly; or invoking the SELinux reference-policy Makefile at
+  runtime.
 - Retaining the GUI or helper as a second supported architecture.
 - Loading configuration from a non-root user's home directory or environment variables.
 - Passing arbitrary command strings to a shell.

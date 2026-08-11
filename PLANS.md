@@ -97,6 +97,8 @@ Priority: highest.
   Polkit action after replacement tests pass.
 - [x] Remove Meson, Ninja, Makefile execution, and build wrappers. Build only with Cargo and let the
   RPM spec install the binary, manual page, and configuration directory directly.
+- [x] Add a packaging-only `.copr/Makefile` implementing COPR SCM `make_srpm`: archive the checked
+  out commit, vendor locked Cargo dependencies, produce one SRPM, and test its source payload in CI.
 - [x] Add a migration note for users of the unreleased 0.1 JSON profiles; do not auto-import mutable
   per-user configuration as root.
 

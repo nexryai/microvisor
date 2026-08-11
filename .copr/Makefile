@@ -2,64 +2,70 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 
+repo := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
+outdir ?= $(CURDIR)
+spec ?= $(repo)/microvisor.spec
+
 .PHONY: srpm
-
 srpm:
-	missing=0
-	for command in cargo git rpmbuild tar xz; do
-		command -v "$$command" >/dev/null 2>&1 || missing=1
+	# COPR runs make_srpm in a disposable buildroot. Local non-root builds must provide these tools.
+	if (( EUID == 0 )); then
+		dnf -y install cargo cargo-rpm-macros git-core rpm-build tar xz
+	fi
+	for tool in cargo git rpmbuild rpmspec tar xz; do
+		command -v "$$tool" >/dev/null || {
+			echo "Required SRPM tool is missing: $$tool" >&2
+			exit 1
+		}
 	done
-	if (( missing )); then
-		dnf -y install cargo git rpm-build tar xz
-	fi
 
-	project_dir="$$(pwd)"
-	output_dir="$$(readlink -m "$${outdir:-$$project_dir}")"
-	spec_file="$${spec:-$$project_dir/microvisor.spec}"
-	version="$$(sed -n 's/^version = "\([^"]*\)"$$/\1/p' Cargo.toml | head -n 1)"
-	test -n "$$version"
-	test -f "$$spec_file"
-	mkdir -p "$$output_dir"
+	spec_path="$$(realpath "$(spec)")"
+	output_directory="$$(realpath -m "$(outdir)")"
+	mkdir -p "$$output_directory"
+	work="$$(mktemp -d)"
+	trap 'rm -rf -- "$$work"' EXIT
 
-	temp_dir="$$(mktemp -d)"
-	trap 'rm -rf "$$temp_dir"' EXIT
-	archive_root="microvisor-$$version"
-	source_date_epoch="$$(git log -1 --format=%ct 2>/dev/null || date +%s)"
+	name="$$(rpmspec -q --srpm --qf '%{NAME}\n' "$$spec_path")"
+	version="$$(rpmspec -q --srpm --qf '%{VERSION}\n' "$$spec_path")"
+	epoch="$$(git -C "$(repo)" log -1 --format=%ct)"
+	source_archive="$$work/$$name-$$version.tar.xz"
+	vendor_archive="$$work/$$name-$$version-vendor.tar.xz"
 
-	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		git archive \
-			--format=tar \
-			--prefix="$$archive_root/" \
-			HEAD > "$$temp_dir/source.tar"
-	else
-		mkdir -p "$$temp_dir/$$archive_root"
-		tar \
-			--exclude=.git \
-			--exclude=build \
-			--exclude=target \
-			--exclude='*.src.rpm' \
-			--exclude='*.tar.xz' \
-			-cf - . | tar -xf - -C "$$temp_dir/$$archive_root"
-		tar -C "$$temp_dir" -cf "$$temp_dir/source.tar" "$$archive_root"
-	fi
-	xz -T0 -9 "$$temp_dir/source.tar"
-	mv "$$temp_dir/source.tar.xz" \
-		"$$output_dir/microvisor-$$version.tar.xz"
-
+	git -C "$(repo)" archive \
+		--format=tar \
+		--prefix="$$name-$$version/" \
+		HEAD | xz --threads=1 -9 --stdout >"$$source_archive"
 	cargo vendor \
+		--manifest-path "$(repo)/Cargo.toml" \
 		--locked \
 		--versioned-dirs \
-		"$$temp_dir/vendor" >/dev/null
+		"$$work/vendor" >/dev/null
 	tar \
 		--sort=name \
-		--mtime="@$$source_date_epoch" \
+		--mtime="@$$epoch" \
 		--owner=0 \
 		--group=0 \
 		--numeric-owner \
-		-C "$$temp_dir" \
-		-cJf "$$output_dir/microvisor-$$version-vendor.tar.xz" \
-		vendor
+		-C "$$work" \
+		-cf - vendor | xz --threads=1 -9 --stdout >"$$vendor_archive"
 
-	rpmbuild -bs "$$spec_file" \
-		--define "_sourcedir $$output_dir" \
-		--define "_srcrpmdir $$output_dir"
+	mkdir -p \
+		"$$work/rpmbuild/BUILD" \
+		"$$work/rpmbuild/BUILDROOT" \
+		"$$work/rpmbuild/RPMS" \
+		"$$work/rpmbuild/SOURCES" \
+		"$$work/rpmbuild/SPECS" \
+		"$$work/rpmbuild/SRPMS" \
+		"$$work/srpm"
+	rpmbuild -bs "$$spec_path" \
+		--define "_topdir $$work/rpmbuild" \
+		--define "_sourcedir $$work" \
+		--define "_srcrpmdir $$work/srpm"
+	shopt -s nullglob
+	srpms=("$$work"/srpm/*.src.rpm)
+	if (( $${#srpms[@]} != 1 )); then
+		echo "Expected exactly one SRPM, found $${#srpms[@]}" >&2
+		exit 1
+	fi
+	install -m 0644 "$${srpms[0]}" "$$output_directory/"
+	echo "Created $$output_directory/$$(basename "$${srpms[0]}")"
