@@ -19,7 +19,7 @@ Accepted direction:
 
 - One short-lived `microvisor` binary performs validation, rendering, status inspection, apply,
   removal, rollback, and recovery.
-- Desired state is read from root-controlled files under `/etc/microvisor/profiles.d/*.yaml`.
+- Desired state is read from one root-controlled document at `/etc/microvisor.yml`.
 - Applied snapshots and transaction records remain separate under `/var/lib/microvisor/`.
 - Mutations are serialized with a lock under `/run/microvisor/`.
 - No GUI, desktop integration, Polkit action, helper protocol, daemon, or network service is part of
@@ -68,14 +68,15 @@ complete disposable-VM recovery matrix before this milestone exits.
 
 Priority: highest.
 
-- [x] Define a versioned `schema_version: 1` YAML profile with UUID, display name, executable,
-  protected directories, launch domain/role, and explicit hardening booleans.
+- [x] Define a versioned `schema_version: 1` YAML document containing a bounded profile list with
+  UUID, display name, executable, protected directories, launch domain/role, and explicit
+  hardening booleans. Keep `/etc/microvisor.yml` as the sole desired-configuration input.
 - [x] Select and review a YAML parser. Demonstrate rejection of duplicate keys, aliases, tags,
   ambiguous coercions, unknown fields, unsupported versions, excessive nesting, oversized files,
   and excessive profile counts.
-- [x] Load only regular root-owned configuration files that are not group- or world-writable; use
-  race-resistant no-follow opens and deterministic filename ordering.
-- [x] Add `generate [output.yaml]`, `validate`, `render <id>`, `apply`, `status`, and `remove <id>`
+- [x] Load only the regular root-owned configuration file when it is not group- or world-writable;
+  use a race-resistant no-follow open and deterministic profile ordering.
+- [x] Add `generate [output.yml]`, `validate`, `render <id>`, `apply`, `status`, and `remove <id>`
   subcommands with stable exit codes. `generate` creates a private, no-overwrite YAML template with
   a UUID v4 without requiring root. Reserve stdout for requested output and stderr for diagnostics.
 - [x] Separate parsing, semantic validation, full-set conflict validation, policy rendering,
@@ -96,7 +97,7 @@ Priority: highest.
 - [x] Remove the GUI sources, helper binary, icons, resources, desktop file, AppStream metadata, and
   Polkit action after replacement tests pass.
 - [x] Remove Meson, Ninja, Makefile execution, and build wrappers. Build only with Cargo and let the
-  RPM spec install the binary, manual page, and configuration directory directly.
+  RPM spec install the binary, manual page, and `/etc/microvisor.yml` directly.
 - [x] Add a packaging-only `.copr/Makefile` implementing COPR SCM `make_srpm`: archive the checked
   out commit, vendor locked Cargo dependencies, produce one SRPM, and test its source payload in CI.
 - [x] Add a migration note for users of the unreleased 0.1 JSON profiles; do not auto-import mutable

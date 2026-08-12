@@ -1,83 +1,59 @@
-use crate::{model::ProtectionProfile, policy};
+use crate::{
+    model::{PROFILE_SCHEMA_VERSION, ProtectionProfile},
+    policy,
+};
 use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 use serde_saphyr::options::MergeKeyPolicy;
 use std::{
-    ffi::OsStr,
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io::Read,
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{MetadataExt, OpenOptionsExt},
-    },
-    path::Path,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    path::{Path, PathBuf},
 };
+use uuid::Uuid;
 
-pub const DEFAULT_CONFIG_DIR: &str = "/etc/microvisor/profiles.d";
-pub const MAX_PROFILE_SIZE: usize = 1024 * 1024;
+pub const DEFAULT_CONFIG_FILE: &str = "/etc/microvisor.yml";
+pub const MAX_CONFIG_SIZE: usize = 1024 * 1024;
 pub const MAX_PROFILE_COUNT: usize = 256;
 
-pub fn load_profiles(directory: &Path) -> Result<Vec<ProtectionProfile>> {
-    validate_config_directory(directory)?;
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Configuration {
+    schema_version: u32,
+    profiles: Vec<DesiredProfile>,
+}
 
-    let mut paths = Vec::new();
-    for entry in fs::read_dir(directory).with_context(|| {
-        format!(
-            "Could not read configuration directory {}",
-            directory.display()
-        )
-    })? {
-        let entry = entry?;
-        if entry.path().extension() == Some(OsStr::new("yaml")) {
-            paths.push(entry.path());
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DesiredProfile {
+    id: Uuid,
+    name: String,
+    executable: PathBuf,
+    data_directories: Vec<PathBuf>,
+    launch_domain: String,
+    launch_role: String,
+    block_ptrace: bool,
+    block_fd_use: bool,
+}
+
+impl From<DesiredProfile> for ProtectionProfile {
+    fn from(profile: DesiredProfile) -> Self {
+        Self {
+            schema_version: PROFILE_SCHEMA_VERSION,
+            id: profile.id,
+            name: profile.name,
+            executable: profile.executable,
+            data_directories: profile.data_directories,
+            launch_domain: profile.launch_domain,
+            launch_role: profile.launch_role,
+            block_ptrace: profile.block_ptrace,
+            block_fd_use: profile.block_fd_use,
         }
     }
-    paths.sort_by(|left, right| {
-        left.as_os_str()
-            .as_bytes()
-            .cmp(right.as_os_str().as_bytes())
-    });
-
-    if paths.len() > MAX_PROFILE_COUNT {
-        bail!(
-            "Configuration contains {} profiles; the limit is {}",
-            paths.len(),
-            MAX_PROFILE_COUNT
-        );
-    }
-
-    let mut profiles = Vec::with_capacity(paths.len());
-    for path in paths {
-        profiles.push(load_profile(&path)?);
-    }
-    ensure_unique_ids(&profiles)?;
-    Ok(profiles)
 }
 
-fn validate_config_directory(directory: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(directory)
-        .with_context(|| format!("Could not inspect {}", directory.display()))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        bail!(
-            "Configuration path {} must be a directory, not a symlink",
-            directory.display()
-        );
-    }
-    if metadata.uid() != 0 {
-        bail!(
-            "Configuration directory {} must be owned by root",
-            directory.display()
-        );
-    }
-    if metadata.mode() & 0o022 != 0 {
-        bail!(
-            "Configuration directory {} must not be writable by group or other users",
-            directory.display()
-        );
-    }
-    Ok(())
-}
-
-pub fn load_profile(path: &Path) -> Result<ProtectionProfile> {
+pub fn load_profiles(path: &Path) -> Result<Vec<ProtectionProfile>> {
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
@@ -87,10 +63,10 @@ pub fn load_profile(path: &Path) -> Result<ProtectionProfile> {
 
     let mut bytes = Vec::new();
     file.by_ref()
-        .take((MAX_PROFILE_SIZE + 1) as u64)
+        .take((MAX_CONFIG_SIZE + 1) as u64)
         .read_to_end(&mut bytes)
         .with_context(|| format!("Could not read {}", path.display()))?;
-    if bytes.len() > MAX_PROFILE_SIZE {
+    if bytes.len() > MAX_CONFIG_SIZE {
         bail!(
             "Configuration file {} exceeds the 1 MiB limit",
             path.display()
@@ -98,7 +74,7 @@ pub fn load_profile(path: &Path) -> Result<ProtectionProfile> {
     }
     let text = std::str::from_utf8(&bytes)
         .with_context(|| format!("Configuration file {} must be UTF-8", path.display()))?;
-    parse_profile(text)
+    parse_config(text)
         .with_context(|| format!("Could not parse configuration file {}", path.display()))
 }
 
@@ -142,27 +118,49 @@ fn ensure_unique_ids(profiles: &[ProtectionProfile]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn parse_profile(text: &str) -> Result<ProtectionProfile> {
+pub(crate) fn parse_config(text: &str) -> Result<Vec<ProtectionProfile>> {
     reject_unsupported_yaml(text)?;
     let options = serde_saphyr::options! {
         budget: serde_saphyr::budget! {
-            max_events: 4_096,
+            max_events: 16_384,
             max_aliases: 0,
             max_anchors: 0,
-            max_depth: 8,
+            max_depth: 10,
             max_inclusion_depth: 0,
             max_documents: 1,
-            max_nodes: 2_048,
-            max_total_scalar_bytes: MAX_PROFILE_SIZE,
-            max_total_comment_bytes: MAX_PROFILE_SIZE,
+            max_nodes: 8_192,
+            max_total_scalar_bytes: MAX_CONFIG_SIZE,
+            max_total_comment_bytes: MAX_CONFIG_SIZE,
             max_merge_keys: 0,
         },
         merge_keys: MergeKeyPolicy::Error,
         strict_booleans: true,
     };
-    let profile: ProtectionProfile = serde_saphyr::from_str_with_options(text, options)?;
-    policy::validate_profile(&profile)?;
-    Ok(profile)
+    let configuration: Configuration = serde_saphyr::from_str_with_options(text, options)?;
+    if configuration.schema_version != PROFILE_SCHEMA_VERSION {
+        bail!(
+            "Unsupported configuration schema version {}; expected {}",
+            configuration.schema_version,
+            PROFILE_SCHEMA_VERSION
+        );
+    }
+    if configuration.profiles.len() > MAX_PROFILE_COUNT {
+        bail!(
+            "Configuration contains {} profiles; the limit is {}",
+            configuration.profiles.len(),
+            MAX_PROFILE_COUNT
+        );
+    }
+    let profiles = configuration
+        .profiles
+        .into_iter()
+        .map(ProtectionProfile::from)
+        .collect::<Vec<_>>();
+    for profile in &profiles {
+        policy::validate_profile(profile)?;
+    }
+    ensure_unique_ids(&profiles)?;
+    Ok(profiles)
 }
 
 // Microvisor deliberately accepts a small, auditable YAML subset. Strings containing these
@@ -244,19 +242,20 @@ fn reject_unsupported_yaml(text: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_profile, reject_unsupported_yaml};
+    use super::{MAX_PROFILE_COUNT, parse_config, reject_unsupported_yaml};
 
     const VALID: &str = "\
 schema_version: 1
-id: 11111111-2222-4333-8444-555555555555
-name: Test application
-executable: /opt/test/bin/application
-data_directories:
-  - /var/lib/test/application
-launch_domain: unconfined_t
-launch_role: unconfined_r
-block_ptrace: true
-block_fd_use: false
+profiles:
+  - id: 11111111-2222-4333-8444-555555555555
+    name: Test application
+    executable: /opt/test/bin/application
+    data_directories:
+      - /var/lib/test/application
+    launch_domain: unconfined_t
+    launch_role: unconfined_r
+    block_ptrace: true
+    block_fd_use: false
 ";
 
     #[test]
@@ -264,7 +263,7 @@ block_fd_use: false
         for yaml in [
             "name: &shared app\n",
             "name: *shared\n",
-            "name: !include other.yaml\n",
+            "name: !include other.yml\n",
             "<<: *defaults\n",
             "---\nname: app\n",
         ] {
@@ -279,34 +278,71 @@ block_fd_use: false
     }
 
     #[test]
-    fn parses_the_versioned_typed_schema() {
-        let profile = parse_profile(VALID).unwrap();
-        assert_eq!(profile.schema_version, 1);
-        assert_eq!(profile.name, "Test application");
-        assert!(profile.block_ptrace);
-        assert!(!profile.block_fd_use);
+    fn parses_the_versioned_document_and_profile_list() {
+        let profiles = parse_config(VALID).unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].schema_version, 1);
+        assert_eq!(profiles[0].name, "Test application");
+        assert!(profiles[0].block_ptrace);
+        assert!(!profiles[0].block_fd_use);
+        assert!(
+            parse_config("schema_version: 1\nprofiles: []\n")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            parse_config(include_str!("../data/microvisor.yml"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
-    fn rejects_unknown_and_duplicate_fields() {
-        let unknown = format!("{VALID}unexpected: value\n");
-        assert!(parse_profile(&unknown).is_err());
-
-        let duplicate = VALID.replacen(
-            "name: Test application",
-            "name: First name\nname: Second name",
-            1,
+    fn rejects_unknown_duplicate_and_per_profile_schema_fields() {
+        assert!(parse_config(&format!("{VALID}unexpected: value\n")).is_err());
+        assert!(parse_config(&VALID.replacen("profiles:", "profiles:\nprofiles:", 1)).is_err());
+        assert!(
+            parse_config(&VALID.replacen(
+                "    name: Test application",
+                "    schema_version: 1\n    name: Test application",
+                1,
+            ))
+            .is_err()
         );
-        assert!(parse_profile(&duplicate).is_err());
     }
 
     #[test]
-    fn rejects_unsupported_versions_and_ambiguous_booleans() {
+    fn rejects_duplicate_ids_unsupported_versions_and_ambiguous_booleans() {
+        let duplicate = format!(
+            "{VALID}{}",
+            VALID
+                .lines()
+                .skip(2)
+                .map(|line| format!("{line}\n"))
+                .collect::<String>()
+        );
+        assert!(parse_config(&duplicate).is_err());
         assert!(
-            parse_profile(&VALID.replacen("schema_version: 1", "schema_version: 2", 1)).is_err()
+            parse_config(&VALID.replacen("schema_version: 1", "schema_version: 2", 1)).is_err()
         );
         assert!(
-            parse_profile(&VALID.replacen("block_ptrace: true", "block_ptrace: yes", 1)).is_err()
+            parse_config(&VALID.replacen("block_ptrace: true", "block_ptrace: yes", 1)).is_err()
         );
+    }
+
+    #[test]
+    fn rejects_more_than_the_profile_limit() {
+        let profile = VALID.lines().skip(2).collect::<Vec<_>>().join("\n");
+        let text = format!(
+            "schema_version: 1\nprofiles:\n{}",
+            (0..=MAX_PROFILE_COUNT)
+                .map(|index| profile.replace(
+                    "11111111-2222-4333-8444-555555555555",
+                    &format!("11111111-2222-4333-8444-{index:012}"),
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert!(parse_config(&text).is_err());
     }
 }

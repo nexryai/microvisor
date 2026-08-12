@@ -28,8 +28,7 @@ test_root="/var/lib/microvisor-ci/$profile_id"
 executable="$test_root/bin/microvisor-ci-bash"
 data_directory="$test_root/data"
 secret_file="$data_directory/secret.txt"
-config_directory=/etc/microvisor/profiles.d
-config_file="$config_directory/integration.yaml"
+config_file=/etc/microvisor.yml
 state_file="/var/lib/microvisor/profiles/$profile_id.json"
 result_directory=$(mktemp -d /run/microvisor-ci.XXXXXX)
 executable_regex=$executable
@@ -75,7 +74,7 @@ cleanup() {
     rm -f -- "$state_file"
   fi
 
-  rm -f -- "$config_file" "$config_file.disabled" "$config_directory"/count-*.yaml
+  rm -f -- "$config_file" "$config_file.disabled"
   if [[ "$created_test_root" == true && "$test_root" == /var/lib/microvisor-ci/* ]]; then
     rm -rf -- "$test_root"
   fi
@@ -91,8 +90,7 @@ trap cleanup EXIT
 ! module_present "$module"
 ! module_present "$deny_module"
 
-mkdir -p "$test_root/bin" "$data_directory" "$config_directory"
-chmod 0755 /etc/microvisor "$config_directory"
+mkdir -p "$test_root/bin" "$data_directory"
 created_test_root=true
 cp /usr/bin/bash "$executable"
 chmod 0755 "$executable"
@@ -101,15 +99,16 @@ restorecon -RF "$test_root"
 
 cat >"$config_file" <<EOF
 schema_version: 1
-id: $profile_id
-name: Rejected profile
-executable: $executable
-data_directories: [$data_directory]
-launch_domain: unconfined_t
-launch_role: unconfined_r
-block_ptrace: true
-block_fd_use: false
-unknown_root_field: rejected
+profiles:
+  - id: $profile_id
+    name: Rejected profile
+    executable: $executable
+    data_directories: [$data_directory]
+    launch_domain: unconfined_t
+    launch_role: unconfined_r
+    block_ptrace: true
+    block_fd_use: false
+    unknown_profile_field: rejected
 EOF
 chmod 0600 "$config_file"
 if "$microvisor_path" validate >"$result_directory/invalid.out" 2>"$result_directory/invalid.err"; then
@@ -127,14 +126,25 @@ if "$microvisor_path" validate >"$result_directory/symlink.out" 2>"$result_direc
 fi
 rm -f -- "$config_file"
 
-for index in $(seq 1 257); do
-  : >"$config_directory/count-$index.yaml"
+printf '%s\n' 'schema_version: 1' 'profiles:' >"$config_file"
+for index in $(seq 0 256); do
+  cat >>"$config_file" <<EOF
+  - id: 11111111-2222-4333-8444-$(printf '%012d' "$index")
+    name: Count limit
+    executable: /opt/test/bin/application
+    data_directories: [/var/lib/test/application]
+    launch_domain: unconfined_t
+    launch_role: unconfined_r
+    block_ptrace: true
+    block_fd_use: false
+EOF
 done
+chmod 0600 "$config_file"
 if "$microvisor_path" validate >"$result_directory/count.out" 2>"$result_directory/count.err"; then
   echo "More than 256 profiles were unexpectedly accepted" >&2
   exit 1
 fi
-rm -f -- "$config_directory"/count-*.yaml
+rm -f -- "$config_file"
 
 head -c 1048577 /dev/zero >"$config_file"
 chmod 0600 "$config_file"
@@ -146,15 +156,16 @@ rm -f -- "$config_file"
 
 cat >"$config_file" <<EOF
 schema_version: 1
-id: $profile_id
-name: SELinux integration test
-executable: $executable
-data_directories:
-  - $data_directory
-launch_domain: unconfined_t
-launch_role: unconfined_r
-block_ptrace: true
-block_fd_use: false
+profiles:
+  - id: $profile_id
+    name: SELinux integration test
+    executable: $executable
+    data_directories:
+      - $data_directory
+    launch_domain: unconfined_t
+    launch_role: unconfined_r
+    block_ptrace: true
+    block_fd_use: false
 EOF
 chmod 0666 "$config_file"
 if "$microvisor_path" validate >"$result_directory/mode.out" 2>"$result_directory/mode.err"; then

@@ -64,13 +64,13 @@ fn run() -> Result<i32> {
             Ok(0)
         }
         [command] if command == "apply" => {
-            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
+            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_FILE))?;
             let count = engine::apply_profiles(profiles)?;
             println!("Applied {count} changed profile(s).");
             Ok(0)
         }
         [command] if command == "status" => {
-            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
+            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_FILE))?;
             let (statuses, converged) = engine::status(profiles)?;
             if statuses.is_empty() {
                 println!("No configured or applied profiles.");
@@ -82,7 +82,7 @@ fn run() -> Result<i32> {
             Ok(if converged { 0 } else { EXIT_DRIFT })
         }
         [command] if command == "supervise" => {
-            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
+            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_FILE))?;
             let profiles = engine::supervision_profiles(profiles)?;
             supervise::run(&profiles)?;
             Ok(0)
@@ -107,7 +107,7 @@ fn generate_template(arguments: &[String]) -> Result<i32> {
     let path = match arguments {
         [] => template::default_path(id),
         [path] => path.into(),
-        _ => bail!("Usage: microvisor generate [output.yaml]"),
+        _ => bail!("Usage: microvisor generate [output.yml]"),
     };
     template::write_new(&path, id)?;
     println!("Generated {} with profile ID {id}.", path.display());
@@ -115,7 +115,7 @@ fn generate_template(arguments: &[String]) -> Result<i32> {
 }
 
 fn load_and_validate() -> Result<Vec<microvisor::model::ProtectionProfile>> {
-    let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
+    let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_FILE))?;
     engine::validate_desired_profiles(profiles)
 }
 
@@ -134,11 +134,11 @@ fn print_help() {
            microvisor status\n\
            microvisor supervise\n\
            microvisor remove <profile-id>\n\
-           microvisor generate [output.yaml]\n\
+           microvisor generate [output.yml]\n\
            microvisor help\n\
            microvisor version\n\n\
-         Configuration: {}/*.yaml\n\
+         Configuration: {}\n\
          Generate, help, and version do not require root. All other commands do.",
-        config::DEFAULT_CONFIG_DIR
+        config::DEFAULT_CONFIG_FILE
     );
 }

@@ -53,7 +53,7 @@ cargo build --release --locked
 %install
 install -Dpm 0755 target/release/microvisor %{buildroot}%{_bindir}/microvisor
 install -Dpm 0644 data/microvisor.8 %{buildroot}%{_mandir}/man8/microvisor.8
-install -d -m 0755 %{buildroot}%{_sysconfdir}/microvisor/profiles.d
+install -Dpm 0600 data/microvisor.yml %{buildroot}%{_sysconfdir}/microvisor.yml
 
 %if %{with check}
 %check
@@ -72,8 +72,7 @@ cargo test --release --locked
 %doc PLANS.md
 %{_bindir}/microvisor
 %{_mandir}/man8/microvisor.8*
-%dir %{_sysconfdir}/microvisor
-%dir %{_sysconfdir}/microvisor/profiles.d
+%config(noreplace) %attr(0600,root,root) %{_sysconfdir}/microvisor.yml
 
 %changelog
 * Tue Aug 11 2026 Nexryai <nexryai@users.noreply.github.com> - 0.1.0-1

@@ -18,7 +18,7 @@ an explicitly designated production target. Do not use a production host for dev
   Polkit, or helper-process dependency.
 - Root-only operations and orchestration live in the main binary. Do not reintroduce an RPC or
   privilege-separation protocol without an approved design change.
-- Desired profiles are versioned YAML files under `/etc/microvisor/profiles.d/`.
+- Desired profiles are one versioned YAML document at `/etc/microvisor.yml`.
 - Applied-state snapshots under `/var/lib/microvisor/` are root-owned recovery data and are never a
   substitute for validating desired configuration.
 - Mutating transactions are serialized by a root-owned runtime lock under `/run/microvisor/`.
@@ -28,7 +28,8 @@ an explicitly designated production target. Do not use a production host for dev
 ## Project map
 
 - `src/main.rs`: root CLI argument handling and output/exit-code contract.
-- `src/config.rs`: secure YAML discovery, bounded parsing, ownership checks, and schema loading.
+- `src/config.rs`: secure single-file YAML loading, bounded parsing, ownership checks, and schema
+  loading.
 - `src/engine.rs`: privileged SELinux orchestration, state, locking, transactions, and recovery.
 - `src/policy.rs`: pure SELinux policy generation and input validation; preserve and extend it.
 - `src/supervise.rs`: bounded `/proc` and policy inspection plus dependency-free ANSI terminal UI.
@@ -52,8 +53,8 @@ an explicitly designated production target. Do not use a production host for dev
 3. Treat YAML as hostile input even when read from `/etc`. Bound total file size and profile count;
    reject unknown and duplicate fields, unsupported schema versions, aliases, tags, non-UTF-8 or
    control characters, and ambiguous scalar coercions.
-4. Read only regular, root-owned configuration files that are not group- or world-writable. Do not
-   follow symlinks when discovering or opening configuration and state files.
+4. Read only the regular, root-owned `/etc/microvisor.yml`, which must not be group- or
+   world-writable. Do not follow symlinks when opening configuration and state files.
 5. Reject relative or overly broad paths, `/`, invalid SELinux identifiers, missing targets,
    filesystem-boundary surprises, and executable or data paths that overlap another profile.
 6. Validate the complete configuration set and compile every generated module before the first
@@ -85,8 +86,8 @@ an explicitly designated production target. Do not use a production host for dev
   relevant policy labels without mutating SELinux.
 - `generate` must remain usable without root, generate a UUID v4, create mode `0600` YAML with
   `O_NOFOLLOW` and create-new semantics, and never overwrite an existing path.
-- `apply` reconciles the complete configuration directory. Never silently preserve an installed
-  profile whose desired YAML was removed; require an explicit, documented removal policy.
+- `apply` reconciles the complete profile list in `/etc/microvisor.yml`. Never silently preserve an
+  installed profile removed from that list; require an explicit, documented removal policy.
 - Version the YAML schema from the first release. Unknown fields are errors, not warnings.
 - Ensure stable deterministic rendering independent of YAML field order and filesystem enumeration
   order.

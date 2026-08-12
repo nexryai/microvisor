@@ -1,8 +1,8 @@
 # Microvisor
 
 Microvisor is a headless, root-operated command-line tool for managing per-application SELinux
-protection profiles. Profiles are declared as YAML files, so the same configuration can be
-reviewed, versioned, and deployed on workstations and servers without a graphical session.
+protection profiles. Profiles are declared together in one YAML file, so the same configuration can
+be reviewed, versioned, and deployed on workstations and servers without a graphical session.
 
 A profile creates:
 
@@ -68,10 +68,10 @@ Install only on a designated production target (or use the RPM package):
 ```bash
 sudo install -Dpm 0755 target/release/microvisor /usr/local/bin/microvisor
 sudo install -Dpm 0644 data/microvisor.8 /usr/local/share/man/man8/microvisor.8
-sudo install -d -m 0755 /etc/microvisor/profiles.d
+sudo install -o root -g root -m 0600 data/microvisor.yml /etc/microvisor.yml
 ```
 
-This installs the CLI, its manual page, and `/etc/microvisor/profiles.d/`. It does not install a
+This installs the CLI, its manual page, and an empty `/etc/microvisor.yml`. It does not install a
 daemon or enable automatic policy mutation at boot.
 
 ## COPR packaging
@@ -111,39 +111,39 @@ disposable source-build environment.
 Create an editable template without root privileges:
 
 ```bash
-microvisor generate chrome.yaml
+microvisor generate microvisor.yml
 ```
 
-The command generates a UUID v4, writes a mode `0600` YAML file, and refuses to overwrite an
-existing path. If the output path is omitted, the file is named
-`microvisor-<generated-uuid>.yaml` in the current directory. Explicit output names must end in
-`.yaml`. Edit the placeholder name and paths, review the result, and then install it on the
-designated production target.
+The command generates a UUID v4, writes a mode `0600` complete configuration, and refuses to
+overwrite an existing path. If the output path is omitted, the file is named `microvisor.yml` in
+the current directory. Explicit output names must end in `.yml`. Edit the placeholder profile,
+append any additional profiles to the same `profiles` list, review the result, and then install it
+on the designated production target.
 
-Each `/etc/microvisor/profiles.d/*.yaml` file contains one versioned profile:
+`/etc/microvisor.yml` is the only desired-configuration input. The document schema is versioned
+once at the top level and contains all profiles:
 
 ```yaml
 schema_version: 1
-id: 11111111-2222-4333-8444-555555555555
-name: Google Chrome
-executable: /opt/google/chrome/chrome
-data_directories:
-  - /home/alice/.config/google-chrome
-  - /home/alice/.cache/google-chrome
-launch_domain: unconfined_t
-launch_role: unconfined_r
-block_ptrace: true
-block_fd_use: true
+profiles:
+  - id: 11111111-2222-4333-8444-555555555555
+    name: Google Chrome
+    executable: /opt/google/chrome/chrome
+    data_directories:
+      - /home/alice/.config/google-chrome
+      - /home/alice/.cache/google-chrome
+    launch_domain: unconfined_t
+    launch_role: unconfined_r
+    block_ptrace: true
+    block_fd_use: true
 ```
 
-On a designated production target, configuration files must be regular, root-owned, have exactly
-one hard link, and not be writable by group or other users. The configuration directory must also
-be root-owned, non-writable by group or other users, and not a symlink. A typical setup is:
+On a designated production target, the configuration must be a regular root-owned file with
+exactly one hard link. It must not be writable by group or other users and must not be a symlink.
+A typical deployment is:
 
 ```bash
-sudo install -d -m 0755 /etc/microvisor/profiles.d
-sudo install -o root -g root -m 0600 chrome.yaml \
-  /etc/microvisor/profiles.d/chrome.yaml
+sudo install -o root -g root -m 0600 microvisor.yml /etc/microvisor.yml
 ```
 
 The loader accepts a deliberately restricted YAML subset. It rejects unknown or duplicate fields,
@@ -156,7 +156,7 @@ paths, missing targets, and overlapping profiles.
 Template generation is intentionally available without root:
 
 ```bash
-microvisor generate [output.yaml]
+microvisor generate [output.yml]
 ```
 
 Run these commands as root only on a designated production target or in the CI integration VM:
@@ -243,4 +243,7 @@ preserve the same deny-module-first ordering described in the manual page and `A
 
 Microvisor does not import the unreleased GUI version's per-user `profiles.json`. Automatically
 trusting mutable user configuration in a root process would cross the new privilege boundary.
-Recreate required profiles as reviewed, root-owned YAML files and validate them before applying.
+Recreate required profiles in one reviewed, root-owned `/etc/microvisor.yml` and validate it before
+applying. Earlier development builds using `/etc/microvisor/profiles.d/*.yaml` are not imported;
+merge those profile mappings manually under the new top-level `profiles` list, removing each
+profile-level `schema_version` field.

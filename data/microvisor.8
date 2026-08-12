@@ -6,7 +6,7 @@ microvisor \- manage YAML-defined SELinux application protection profiles
 .RI { validate | apply | status | supervise | help | version }
 .br
 .B microvisor generate
-.RI [ output.yaml ]
+.RI [ output.yml ]
 .br
 .B microvisor render
 .I profile-id
@@ -16,17 +16,17 @@ microvisor \- manage YAML-defined SELinux application protection profiles
 .SH DESCRIPTION
 Microvisor is a short-lived, headless root command that generates and applies
 per-application SELinux policy. Desired profiles are read from regular YAML
-files below
-.IR /etc/microvisor/profiles.d .
+file
+.IR /etc/microvisor.yml .
 Generate, help, and version do not require effective UID zero. All other
 commands do.
 .SH COMMANDS
 .TP
-.BI "generate [" output.yaml "]"
-Create a mode 0600 YAML template with a randomly generated UUID. Existing
-paths are never overwritten, and explicit output names must end in .yaml.
-Without an output path, write
-microvisor-UUID.yaml in the current directory.
+.BI "generate [" output.yml "]"
+Create a mode 0600 complete YAML configuration containing one profile with a
+randomly generated UUID. Existing paths are never overwritten, and explicit
+output names must end in .yml. Without an output path, write microvisor.yml in
+the current directory.
 .TP
 .B validate
 Parse, normalize, and validate the complete desired configuration without
@@ -55,9 +55,10 @@ Remove an applied profile using its root-owned snapshot, restore labels, and
 delete its snapshot.
 .SH FILES
 .TP
-.I /etc/microvisor/profiles.d/*.yaml
-Root-owned desired profile configuration. Files and the directory must not be
-writable by group or other users. Symlinks and hard-linked files are rejected.
+.I /etc/microvisor.yml
+The sole desired-configuration input. This root-owned regular file contains a
+versioned profiles list, must not be writable by group or other users, and must
+have exactly one hard link. Symlinks are rejected.
 .TP
 .I /var/lib/microvisor/profiles/*.json
 Root-only applied-state snapshots used for status, rollback, and recovery.
