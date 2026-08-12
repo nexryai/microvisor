@@ -27,14 +27,41 @@ srpm:
 
 	name="$$(rpmspec -q --srpm --qf '%{NAME}\n' "$$spec_path")"
 	version="$$(rpmspec -q --srpm --qf '%{VERSION}\n' "$$spec_path")"
-	epoch="$$(git -C "$(repo)" log -1 --format=%ct)"
 	source_archive="$$work/$$name-$$version.tar.xz"
 	vendor_archive="$$work/$$name-$$version-vendor.tar.xz"
 
-	git -C "$(repo)" archive \
-		--format=tar \
-		--prefix="$$name-$$version/" \
-		HEAD | xz --threads=1 -9 --stdout >"$$source_archive"
+	if git -C "$(repo)" rev-parse --verify HEAD >/dev/null 2>&1; then
+		epoch="$$(git -C "$(repo)" log -1 --format=%ct)"
+		git -C "$(repo)" archive \
+			--format=tar \
+			--prefix="$$name-$$version/" \
+			HEAD | xz --threads=1 -9 --stdout >"$$source_archive"
+	else
+		# GitHub job containers can receive an exported checkout without usable Git metadata.
+		# Copy only source inputs, then normalize the archive so build products never leak in.
+		epoch="$${SOURCE_DATE_EPOCH:-0}"
+		[[ "$$epoch" =~ ^[0-9]+$$ ]] || {
+			echo "SOURCE_DATE_EPOCH must be a non-negative integer" >&2
+			exit 1
+		}
+		mkdir -p "$$work/source/$$name-$$version"
+		tar \
+			--exclude-vcs \
+			--exclude='./build' \
+			--exclude='./target' \
+			--exclude='*.rpm' \
+			--exclude='*.tar.xz' \
+			-C "$(repo)" \
+			-cf - . | tar -C "$$work/source/$$name-$$version" -xf -
+		tar \
+			--sort=name \
+			--mtime="@$$epoch" \
+			--owner=0 \
+			--group=0 \
+			--numeric-owner \
+			-C "$$work/source" \
+			-cf - "$$name-$$version" | xz --threads=1 -9 --stdout >"$$source_archive"
+	fi
 	cargo vendor \
 		--manifest-path "$(repo)/Cargo.toml" \
 		--locked \

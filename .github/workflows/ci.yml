@@ -43,6 +43,8 @@ jobs:
           test -f "${install_root}/etc/microvisor.yml"
           test "$(stat -c %a "${install_root}/etc/microvisor.yml")" = 600
       - name: Build COPR source RPM
+        env:
+          SOURCE_DATE_EPOCH: "0"
         run: |
           srpm_directory="${RUNNER_TEMP}/microvisor-srpm"
           make -f .copr/Makefile srpm \
