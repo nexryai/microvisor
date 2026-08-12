@@ -51,6 +51,11 @@ selinux_type() {
   stat -c %C "$1" | cut -d: -f3
 }
 
+write_empty_config() {
+  printf '%s\n' 'schema_version: 1' 'profiles: []' >"$config_file"
+  chmod 0600 "$config_file"
+}
+
 cleanup() {
   local status=$?
   trap - EXIT
@@ -190,11 +195,14 @@ transaction_started=true
 "$microvisor_path" apply | grep -Fq 'Applied 0 changed profile(s).'
 "$microvisor_path" status | grep -Fq "$profile_id"$'\tapplied\t'
 mv "$config_file" "$config_file.disabled"
-if "$microvisor_path" status >"$result_directory/missing-config.status"; then
-  echo "Status unexpectedly ignored an installed profile without YAML" >&2
+write_empty_config
+if "$microvisor_path" status >"$result_directory/removed-from-config.status"; then
+  echo "Status unexpectedly ignored an installed profile removed from the desired list" >&2
   exit 1
 fi
-grep -Fq "$profile_id"$'\tinstalled-without-config\t' "$result_directory/missing-config.status"
+grep -Fq "$profile_id"$'\tinstalled-without-config\t' \
+  "$result_directory/removed-from-config.status"
+rm -f -- "$config_file"
 mv "$config_file.disabled" "$config_file"
 
 module_present "$module"
@@ -261,6 +269,6 @@ protected_type=$("$executable" -c 'stat -c %C "$1" | cut -d: -f3' -- "$secret_fi
 [[ $(/usr/bin/cat "$secret_file") == microvisor-ci-secret ]]
 
 transaction_started=false
-rm -f -- "$config_file"
+write_empty_config
 "$microvisor_path" validate | grep -Fq 'Validated 0 profile(s).'
 echo "SELinux integration test passed."
