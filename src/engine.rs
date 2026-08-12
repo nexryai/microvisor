@@ -134,6 +134,57 @@ pub struct ProfileStatus {
     pub state: &'static str,
 }
 
+#[derive(Debug, Clone)]
+pub struct SupervisionProfile {
+    pub profile: ProtectionProfile,
+    pub applied: bool,
+    pub desired: bool,
+}
+
+pub fn supervision_profiles(desired: Vec<ProtectionProfile>) -> Result<Vec<SupervisionProfile>> {
+    let _transaction_lock = acquire_transaction_lock()?;
+    ensure_state_directory()?;
+    let applied = load_all_states()?;
+    let desired = validate_profiles_with_applied(desired, &applied)?;
+    Ok(merge_supervision_profiles(desired, applied))
+}
+
+fn merge_supervision_profiles(
+    desired: Vec<ProtectionProfile>,
+    applied: Vec<ProtectionProfile>,
+) -> Vec<SupervisionProfile> {
+    let mut profiles = applied
+        .into_iter()
+        .map(|profile| SupervisionProfile {
+            profile,
+            applied: true,
+            desired: false,
+        })
+        .collect::<Vec<_>>();
+
+    for profile in desired {
+        if let Some(item) = profiles
+            .iter_mut()
+            .find(|item| item.profile.id == profile.id && item.profile == profile)
+        {
+            item.desired = true;
+        } else {
+            profiles.push(SupervisionProfile {
+                profile,
+                applied: false,
+                desired: true,
+            });
+        }
+    }
+    profiles.sort_by(|left, right| {
+        left.profile
+            .id
+            .cmp(&right.profile.id)
+            .then_with(|| right.applied.cmp(&left.applied))
+    });
+    profiles
+}
+
 pub fn status(desired: Vec<ProtectionProfile>) -> Result<(Vec<ProfileStatus>, bool)> {
     let _transaction_lock = acquire_transaction_lock()?;
     ensure_status_environment()?;
@@ -1388,7 +1439,7 @@ fn checked(command: &mut Command) -> Result<Output> {
     Ok(output)
 }
 
-fn trusted_command(command: &str) -> Result<Command> {
+pub(crate) fn trusted_command(command: &str) -> Result<Command> {
     // Resolve the executable from root-owned system directories and discard the caller's
     // environment. Profile values are appended later as argv entries, never as shell text.
     let mut process = Command::new(find_command(command)?);
@@ -1422,8 +1473,8 @@ fn find_command(command: &str) -> Result<PathBuf> {
 mod tests {
     use super::{
         AppliedState, PolicyBuildConfig, STATE_SCHEMA_VERSION, deserialize_state,
-        normalize_profile_with_applied, parse_major_minor, parse_policy_build_config,
-        validate_profiles,
+        merge_supervision_profiles, normalize_profile_with_applied, parse_major_minor,
+        parse_policy_build_config, validate_profiles,
     };
     use crate::model::ProtectionProfile;
     use std::{
@@ -1590,5 +1641,29 @@ mod tests {
             "applied":true
         }"#;
         assert_eq!(deserialize_state(legacy).unwrap(), profile);
+    }
+
+    #[test]
+    fn supervision_keeps_applied_and_drifted_desired_profiles_distinct() {
+        let mut applied = ProtectionProfile::new();
+        applied.id = Uuid::parse_str("11111111-2222-4333-8444-555555555555").unwrap();
+        applied.name = "Applied".into();
+        applied.executable = "/opt/test/bin/application".into();
+        applied.data_directories = vec!["/var/lib/test/application".into()];
+
+        let mut desired = applied.clone();
+        desired.name = "Changed configuration".into();
+        let rows = merge_supervision_profiles(vec![desired.clone()], vec![applied.clone()]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].profile, applied);
+        assert!(rows[0].applied);
+        assert!(!rows[0].desired);
+        assert_eq!(rows[1].profile, desired);
+        assert!(!rows[1].applied);
+        assert!(rows[1].desired);
+
+        let rows = merge_supervision_profiles(vec![applied.clone()], vec![applied]);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].applied && rows[0].desired);
     }
 }

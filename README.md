@@ -166,6 +166,7 @@ sudo microvisor validate
 sudo microvisor render <profile-id>
 sudo microvisor apply
 sudo microvisor status
+sudo microvisor supervise
 sudo microvisor remove <profile-id>
 ```
 
@@ -179,6 +180,10 @@ sudo microvisor remove <profile-id>
   undergo canonicalization and filesystem metadata checks.
 - `status` compares desired profiles, root-owned snapshots, installed modules, and local
   file-context rules. Exit status 2 means drift.
+- `supervise` opens a color, full-terminal inspector for current processes, their executable labels,
+  Microvisor profiles, and system `*_exec_t` file-context rules. Use arrow keys or `j`/`k` to move,
+  `Tab` or `1`/`2`/`3` to switch views, `r` to reload policy rules, and `q` to quit. When standard
+  input or output is not a terminal, it prints one tab-separated process snapshot instead.
 - `remove` trusts the root-owned applied snapshot rather than mutable YAML when restoring labels.
 
 Deleting YAML does not silently remove installed protection. `status` reports
@@ -187,6 +192,12 @@ Deleting YAML does not silently remove installed protection. `status` reports
 Mutating operations are serialized by `/run/microvisor/transaction.lock`. Applied-state snapshots
 are atomically stored with mode `0600` under `/var/lib/microvisor/profiles/`, whose mode is `0700`.
 Snapshots are internal recovery data, not configuration input.
+
+The supervisor uses green for an observed or configured Microvisor domain, yellow for a distinct
+system SELinux domain, red for `unconfined_t`, and gray when a label cannot be read. A file-context
+rule assigns a label; it does not by itself prove every allowed or denied operation. The detail pane
+therefore explains the Microvisor deny complement exactly, but directs administrators to SELinux
+policy queries and AVC logs for exact decisions made by the distribution policy.
 
 ## Diagnostics
 

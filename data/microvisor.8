@@ -3,7 +3,7 @@
 microvisor \- manage YAML-defined SELinux application protection profiles
 .SH SYNOPSIS
 .B microvisor
-.RI { validate | apply | status | help | version }
+.RI { validate | apply | status | supervise | help | version }
 .br
 .B microvisor generate
 .RI [ output.yaml ]
@@ -43,6 +43,13 @@ was removed are reported by status and are not silently removed.
 Compare desired configuration, root-owned applied snapshots, installed modules,
 and local file-context rules. Exit status 2 indicates drift.
 .TP
+.B supervise
+Open a full-terminal, color inspector showing current processes and SELinux
+domains, executable labels, Microvisor restrictions, and system executable
+file-context rules. Arrow keys or j/k select a row; Tab or 1/2/3 changes view;
+r refreshes policy rules; q or Control-C exits. If standard input or output is
+not a terminal, print one tab-separated process snapshot and exit.
+.TP
 .BI "remove " profile-id
 Remove an applied profile using its root-owned snapshot, restore labels, and
 delete its snapshot.
@@ -66,6 +73,11 @@ values through a shell.
 Type-enforcement modules are compiled by invoking m4, checkmodule, and
 semodule_package directly against root-owned reference-policy sources. No shell,
 Makefile, or general-purpose build system is executed.
+.PP
+The supervise command classifies Microvisor domains, system-policy domains,
+unconfined domains, and unreadable labels. File-context entries describe
+label assignment, not the complete allow graph. Consult policy queries and AVC
+logs before concluding that a system domain permits or denies a specific action.
 .SH RECOVERY
 Use
 .B microvisor remove

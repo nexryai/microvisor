@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use microvisor::{config, diagnostics, engine, policy, template};
+use microvisor::{config, diagnostics, engine, policy, supervise, template};
 use std::{env, path::Path};
 use uuid::Uuid;
 
@@ -81,6 +81,12 @@ fn run() -> Result<i32> {
             }
             Ok(if converged { 0 } else { EXIT_DRIFT })
         }
+        [command] if command == "supervise" => {
+            let profiles = config::load_profiles(Path::new(config::DEFAULT_CONFIG_DIR))?;
+            let profiles = engine::supervision_profiles(profiles)?;
+            supervise::run(&profiles)?;
+            Ok(0)
+        }
         [command, id] if command == "remove" => {
             let id = parse_id(id)?;
             if engine::remove_profile(id)? {
@@ -126,6 +132,7 @@ fn print_help() {
            microvisor render <profile-id>\n\
            microvisor apply\n\
            microvisor status\n\
+           microvisor supervise\n\
            microvisor remove <profile-id>\n\
            microvisor generate [output.yaml]\n\
            microvisor help\n\

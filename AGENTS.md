@@ -31,6 +31,7 @@ an explicitly designated production target. Do not use a production host for dev
 - `src/config.rs`: secure YAML discovery, bounded parsing, ownership checks, and schema loading.
 - `src/engine.rs`: privileged SELinux orchestration, state, locking, transactions, and recovery.
 - `src/policy.rs`: pure SELinux policy generation and input validation; preserve and extend it.
+- `src/supervise.rs`: bounded `/proc` and policy inspection plus dependency-free ANSI terminal UI.
 - `src/model.rs`: versioned YAML profile and derived policy identifiers.
 - `src/template.rs`: non-privileged UUID and YAML template generation with no-overwrite writes.
 - `tests/policy.rs`: deterministic policy-generator and validation tests.
@@ -80,7 +81,8 @@ an explicitly designated production target. Do not use a production host for dev
 
 - Use subcommands with explicit semantics: `generate` creates an uninstalled local template;
   `validate` and `render` are read-only; `apply` and `remove` mutate host state; `status` compares
-  desired, applied, and observed SELinux state.
+  desired, applied, and observed SELinux state; `supervise` visualizes processes, executables, and
+  relevant policy labels without mutating SELinux.
 - `generate` must remain usable without root, generate a UUID v4, create mode `0600` YAML with
   `O_NOFOLLOW` and create-new semantics, and never overwrite an existing path.
 - `apply` reconciles the complete configuration directory. Never silently preserve an installed

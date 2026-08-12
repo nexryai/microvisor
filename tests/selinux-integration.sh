@@ -36,6 +36,7 @@ executable_regex=$executable
 data_regex="${data_directory}(/.*)?"
 transaction_started=false
 created_test_root=false
+supervised_pid=
 
 module_present() {
   semodule -l |
@@ -55,6 +56,11 @@ cleanup() {
   local status=$?
   trap - EXIT
   set +e
+
+  if [[ -n "$supervised_pid" ]]; then
+    kill "$supervised_pid" >/dev/null 2>&1
+    wait "$supervised_pid" >/dev/null 2>&1
+  fi
 
   # Prefer the CLI's root-owned snapshot. The fallback preserves recovery order if application
   # failed before the snapshot was committed.
@@ -188,6 +194,21 @@ module_present "$deny_module"
 [[ $(stat -c %a "$state_file") == 600 ]]
 fcontext_present "$executable_regex"
 fcontext_present "$data_regex"
+
+"$executable" -c 'while :; do sleep 1; done' &
+supervised_pid=$!
+for _ in $(seq 1 20); do
+  [[ $(cat "/proc/$supervised_pid/attr/current") == *":$app_type:"* ]] && break
+  sleep 0.1
+done
+[[ $(cat "/proc/$supervised_pid/attr/current") == *":$app_type:"* ]]
+"$microvisor_path" supervise >"$result_directory/supervise.txt"
+grep -Fq 'Microvisor supervise — SELinux Enforcing' "$result_directory/supervise.txt"
+grep -Fq $'Microvisor\tpid='"$supervised_pid"$'\t'"$app_type" \
+  "$result_directory/supervise.txt"
+kill "$supervised_pid"
+wait "$supervised_pid" || true
+supervised_pid=
 
 filesystem_classes=(dir file lnk_file chr_file blk_file sock_file fifo_file)
 for object_class in "${filesystem_classes[@]}"; do

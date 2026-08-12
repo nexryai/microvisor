@@ -149,6 +149,9 @@ Exit criteria:
 - [ ] Test service launch domains and systemd-managed workloads in addition to interactive desktop
   applications.
 - [ ] Define log rotation, audit retention, and integration with the system journal.
+- [x] Add a dependency-free `supervise` terminal inspector for live process domains, executable
+  labels, Microvisor restrictions, and system executable file-context rules, with a non-TTY
+  snapshot mode for automation and logs.
 - [x] Add a manual page covering configuration ownership, deployment, status, rollback, and
   emergency recovery.
 
