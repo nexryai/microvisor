@@ -1020,6 +1020,7 @@ fn is_terminal(fd: RawFd) -> bool {
 mod tests {
     use super::*;
     use crate::model::ProtectionProfile;
+    use std::os::fd::{FromRawFd, OwnedFd};
     use uuid::Uuid;
 
     fn profile() -> SupervisionProfile {
@@ -1138,5 +1139,58 @@ mod tests {
             rows.iter()
                 .any(|row| { row.kind == ProtectionKind::Microvisor && row.process_count == 0 })
         );
+    }
+
+    #[test]
+    fn terminal_enters_raw_mode_reads_keys_and_restores_settings() {
+        let mut master = -1;
+        let mut slave = -1;
+        // openpty initializes both descriptors on success; immediately wrapping them in OwnedFd
+        // keeps every test failure path leak-free.
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            },
+            0
+        );
+        let master = unsafe { OwnedFd::from_raw_fd(master) };
+        let slave = unsafe { OwnedFd::from_raw_fd(slave) };
+
+        let mut original = unsafe { std::mem::zeroed::<libc::termios>() };
+        assert_eq!(
+            unsafe { libc::tcgetattr(slave.as_raw_fd(), &mut original) },
+            0
+        );
+        let terminal = Terminal::enter(slave.as_raw_fd(), slave.as_raw_fd()).unwrap();
+        let mut raw = unsafe { std::mem::zeroed::<libc::termios>() };
+        assert_eq!(unsafe { libc::tcgetattr(slave.as_raw_fd(), &mut raw) }, 0);
+        assert_eq!(raw.c_lflag & (libc::ICANON | libc::ECHO | libc::ISIG), 0);
+
+        let input = b"j";
+        assert_eq!(
+            unsafe { libc::write(master.as_raw_fd(), input.as_ptr().cast(), input.len()) },
+            1
+        );
+        assert_eq!(
+            terminal
+                .read_key(Duration::from_millis(100), View::Processes)
+                .unwrap(),
+            Some(Key::Down)
+        );
+        drop(terminal);
+
+        let mut restored = unsafe { std::mem::zeroed::<libc::termios>() };
+        assert_eq!(
+            unsafe { libc::tcgetattr(slave.as_raw_fd(), &mut restored) },
+            0
+        );
+        let flags = libc::ICANON | libc::ECHO | libc::ISIG;
+        assert_eq!(restored.c_lflag & flags, original.c_lflag & flags);
     }
 }
