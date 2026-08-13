@@ -1,7 +1,7 @@
 %bcond check 1
 
 Name:           microvisor
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?buildtag}%{?dist}
 Summary:        Headless SELinux protection profile manager
 
