@@ -32,7 +32,8 @@ an explicitly designated production target. Do not use a production host for dev
   loading.
 - `src/engine.rs`: privileged SELinux orchestration, state, locking, transactions, and recovery.
 - `src/policy.rs`: pure SELinux policy generation and input validation; preserve and extend it.
-- `src/supervise.rs`: bounded `/proc` and policy inspection plus dependency-free ANSI terminal UI.
+- `src/supervise.rs`: bounded `/proc` and optional loaded-policy inspection plus dependency-free
+  ANSI terminal UI, including the process allow/default-deny detail screen.
 - `src/model.rs`: versioned YAML profile and derived policy identifiers.
 - `src/template.rs`: non-privileged UUID and YAML template generation with no-overwrite writes.
 - `tests/policy.rs`: deterministic policy-generator and validation tests.

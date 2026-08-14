@@ -181,9 +181,16 @@ sudo microvisor remove <profile-id>
 - `status` compares desired profiles, root-owned snapshots, installed modules, and local
   file-context rules. Exit status 2 means drift.
 - `supervise` opens a color, full-terminal inspector for current processes, their executable labels,
-  Microvisor profiles, and system `*_exec_t` file-context rules. Use arrow keys or `j`/`k` to move,
-  `Tab` or `1`/`2`/`3` to switch views, `r` to reload policy rules, and `q` to quit. When standard
-  input or output is not a terminal, it prints one tab-separated process snapshot instead.
+  Microvisor profiles, and system `*_exec_t` file-context rules. In the process view, press `Enter`
+  or `d` for a scrollable explanation of the selected process: identity, exact active or planned
+  Microvisor data/ptrace/file-descriptor rules, loaded SELinux allow rules grouped into plain-language
+  file, network, and process-control actions, and the default-deny boundary. `sesearch` is used when
+  available to inspect the loaded distribution policy; it is optional, and the screen explicitly
+  reports when those extra details cannot be queried. Allowed rules are green, explicit and default
+  denies are red, and configured-only plans are yellow. Use arrow keys or `j`/`k` to move or scroll,
+  `Esc`, Backspace, or `Enter` to leave details, `Tab` or `1`/`2`/`3` to switch views, `r` to reload,
+  and `q` to quit. When standard input or output is not a terminal, it prints one tab-separated
+  process snapshot instead.
 - `remove` trusts the root-owned applied snapshot rather than mutable YAML when restoring labels.
 
 Deleting YAML does not silently remove installed protection. `status` reports
@@ -195,9 +202,11 @@ Snapshots are internal recovery data, not configuration input.
 
 The supervisor uses green for an observed or configured Microvisor domain, yellow for a distinct
 system SELinux domain, red for `unconfined_t`, and gray when a label cannot be read. A file-context
-rule assigns a label; it does not by itself prove every allowed or denied operation. The detail pane
-therefore explains the Microvisor deny complement exactly, but directs administrators to SELinux
-policy queries and AVC logs for exact decisions made by the distribution policy.
+rule assigns a label; it does not by itself prove every allowed or denied operation. The process
+detail screen distinguishes installed Microvisor denies from configured-only plans and from allow
+rules found in the currently loaded distribution policy. SELinux normally records what is allowed,
+not a finite list of everything denied, so the screen labels absence of an allow as default-deny and
+still directs administrators to AVC logs for the authoritative explanation of an attempted action.
 
 ## Diagnostics
 

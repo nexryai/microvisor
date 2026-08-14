@@ -47,8 +47,13 @@ and local file-context rules. Exit status 2 indicates drift.
 Open a full-terminal, color inspector showing current processes and SELinux
 domains, executable labels, Microvisor restrictions, and system executable
 file-context rules. Arrow keys or j/k select a row; Tab or 1/2/3 changes view;
-r refreshes policy rules; q or Control-C exits. If standard input or output is
-not a terminal, print one tab-separated process snapshot and exit.
+Enter or d opens a scrollable process detail screen; Escape, Backspace, or
+Enter returns to the list. The detail screen explains active versus planned
+Microvisor allow and deny rules and, when sesearch is available, groups loaded
+SELinux allow rules into file, network, process-control, and other operations
+while retaining their raw permission names. r refreshes policy details; q or
+Control-C exits. If standard input or output is not a terminal, print one
+tab-separated process snapshot and exit.
 .TP
 .BI "remove " profile-id
 Remove an applied profile using its root-owned snapshot, restore labels, and
@@ -77,8 +82,12 @@ Makefile, or general-purpose build system is executed.
 .PP
 The supervise command classifies Microvisor domains, system-policy domains,
 unconfined domains, and unreadable labels. File-context entries describe
-label assignment, not the complete allow graph. Consult policy queries and AVC
-logs before concluding that a system domain permits or denies a specific action.
+label assignment, not the complete allow graph. Its process detail screen shows
+the exact configured Microvisor complement and optionally queries the loaded
+policy with sesearch. sesearch is not a required runtime dependency; if it is
+unavailable, no distribution-policy decision is inferred. SELinux default-denies
+operations without a matching allow, and AVC logs remain authoritative for a
+specific attempted action.
 .SH RECOVERY
 Use
 .B microvisor remove

@@ -1,4 +1,7 @@
-use crate::engine::{self, SupervisionProfile};
+use crate::{
+    engine::{self, SupervisionProfile},
+    policy,
+};
 use anyhow::{Context, Result, bail};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -10,11 +13,14 @@ use std::{
         unix::{ffi::OsStrExt, fs::MetadataExt},
     },
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
 const MAX_FCONTEXT_OUTPUT: u64 = 16 * 1024 * 1024;
+const MAX_POLICY_OUTPUT: u64 = 16 * 1024 * 1024;
+const MAX_POLICY_RULES: usize = 20_000;
+const MAX_DISPLAYED_POLICY_RULES: usize = 1_000;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +68,30 @@ struct FcontextRule {
     profile_index: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct AllowRule {
+    target: String,
+    object_class: String,
+    permissions: Vec<String>,
+    condition: Option<String>,
+    extended: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PolicyInspection {
+    Rules {
+        rules: Vec<AllowRule>,
+        truncated: bool,
+    },
+    Unavailable(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessDetail {
+    process: ProcessRow,
+    policy: PolicyInspection,
+}
+
 #[derive(Debug)]
 struct Snapshot {
     enforcement: String,
@@ -76,6 +106,8 @@ struct Snapshot {
 struct UiState {
     view: View,
     selected: [usize; 3],
+    process_detail: Option<ProcessDetail>,
+    detail_scroll: usize,
 }
 
 impl Default for UiState {
@@ -83,6 +115,8 @@ impl Default for UiState {
         Self {
             view: View::Processes,
             selected: [0; 3],
+            process_detail: None,
+            detail_scroll: 0,
         }
     }
 }
@@ -121,28 +155,62 @@ pub fn run(profiles: &[SupervisionProfile]) -> Result<()> {
 
     loop {
         if let Some(input) = terminal.read_key(Duration::from_millis(200), state.view)? {
-            match input {
-                Key::Quit => break,
-                Key::Up => state.set_selected(state.selected().saturating_sub(1)),
-                Key::Down => {
-                    let last = row_count(&snapshot, state.view).saturating_sub(1);
-                    state.set_selected(state.selected().saturating_add(1).min(last));
+            if state.process_detail.is_some() {
+                match input {
+                    Key::Quit => break,
+                    Key::Up => state.detail_scroll = state.detail_scroll.saturating_sub(1),
+                    Key::Down => {
+                        if let Some(detail) = &state.process_detail {
+                            let max_scroll = process_detail_lines(&snapshot, detail)
+                                .len()
+                                .saturating_sub(terminal.size().1.max(12).saturating_sub(4).max(1));
+                            state.detail_scroll =
+                                state.detail_scroll.saturating_add(1).min(max_scroll);
+                        }
+                    }
+                    Key::Back | Key::Open => {
+                        state.process_detail = None;
+                        state.detail_scroll = 0;
+                    }
+                    Key::Refresh => {
+                        if let Some(detail) = &mut state.process_detail {
+                            detail.policy = inspect_process_policy(&detail.process.domain);
+                        }
+                        state.detail_scroll = 0;
+                    }
+                    Key::Switch(_) | Key::Ignored => {}
                 }
-                Key::Switch(view) => {
-                    state.view = view;
-                    clamp_selection(&snapshot, &mut state);
+            } else {
+                match input {
+                    Key::Quit => break,
+                    Key::Up => state.set_selected(state.selected().saturating_sub(1)),
+                    Key::Down => {
+                        let last = row_count(&snapshot, state.view).saturating_sub(1);
+                        state.set_selected(state.selected().saturating_add(1).min(last));
+                    }
+                    Key::Switch(view) => {
+                        state.view = view;
+                        clamp_selection(&snapshot, &mut state);
+                    }
+                    Key::Refresh => {
+                        snapshot = collect_snapshot(profiles.to_vec());
+                        refreshed = Instant::now();
+                        clamp_selection(&snapshot, &mut state);
+                    }
+                    Key::Open if state.view == View::Processes => {
+                        if let Some(process) = snapshot.processes.get(state.selected()).cloned() {
+                            let policy = inspect_process_policy(&process.domain);
+                            state.process_detail = Some(ProcessDetail { process, policy });
+                            state.detail_scroll = 0;
+                        }
+                    }
+                    Key::Open | Key::Back | Key::Ignored => {}
                 }
-                Key::Refresh => {
-                    snapshot = collect_snapshot(profiles.to_vec());
-                    refreshed = Instant::now();
-                    clamp_selection(&snapshot, &mut state);
-                }
-                Key::Ignored => {}
             }
             terminal.draw(&render_frame(&snapshot, &state, terminal.size(), true))?;
         }
 
-        if refreshed.elapsed() >= REFRESH_INTERVAL {
+        if state.process_detail.is_none() && refreshed.elapsed() >= REFRESH_INTERVAL {
             refresh_dynamic(&mut snapshot);
             refreshed = Instant::now();
             clamp_selection(&snapshot, &mut state);
@@ -358,6 +426,155 @@ fn parse_fcontext_rule(line: &str) -> Option<FcontextRule> {
     })
 }
 
+fn inspect_process_policy(domain: &str) -> PolicyInspection {
+    if let Err(error) = policy::validate_selinux_identifier(domain) {
+        return PolicyInspection::Unavailable(format!(
+            "The process domain is not safe to query: {error}"
+        ));
+    }
+    let mut command = match engine::trusted_command("sesearch") {
+        Ok(command) => command,
+        Err(_) => {
+            return PolicyInspection::Unavailable(
+                "Loaded-policy details are unavailable because sesearch was not found; Microvisor profile rules below remain exact."
+                    .to_owned(),
+            );
+        }
+    };
+    command.args(["-A", "-C", "-s", domain]);
+    let output = match read_bounded_output(
+        &mut command,
+        MAX_POLICY_OUTPUT,
+        "sesearch output",
+        "Could not query the loaded SELinux policy",
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            return PolicyInspection::Unavailable(format!(
+                "Loaded-policy details could not be queried: {error:#}"
+            ));
+        }
+    };
+    let (mut rules, truncated) = parse_allow_rules(&output);
+    rules.sort();
+    rules.dedup();
+    if truncated || rules.len() > MAX_POLICY_RULES {
+        rules.truncate(MAX_POLICY_RULES);
+    }
+    PolicyInspection::Rules { rules, truncated }
+}
+
+fn read_bounded_output(
+    command: &mut Command,
+    limit: u64,
+    output_name: &str,
+    spawn_context: &str,
+) -> Result<String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = command.spawn().with_context(|| spawn_context.to_owned())?;
+    let mut output = Vec::new();
+    child
+        .stdout
+        .take()
+        .with_context(|| format!("Could not capture {output_name}"))?
+        .take(limit + 1)
+        .read_to_end(&mut output)?;
+    if output.len() as u64 > limit {
+        // Stop the producer before waiting, since this bounded reader deliberately stopped
+        // consuming its pipe. Policy output is host-controlled but must not exhaust root memory.
+        let _ = child.kill();
+        let _ = child.wait();
+        bail!(
+            "{output_name} exceeds the {} MiB safety limit",
+            limit / 1024 / 1024
+        );
+    }
+    let status = child.wait()?;
+    if !status.success() {
+        bail!("policy query exited with {status}");
+    }
+    String::from_utf8(output).with_context(|| format!("{output_name} is not UTF-8"))
+}
+
+fn parse_allow_rules(output: &str) -> (Vec<AllowRule>, bool) {
+    let mut rules = Vec::new();
+    let mut statement = String::new();
+    let mut truncated = false;
+    for line in output.lines() {
+        let line = line.trim();
+        if statement.is_empty() {
+            if !line.starts_with("allow ") && !line.starts_with("allowxperm ") {
+                continue;
+            }
+            statement.push_str(line);
+        } else {
+            statement.push(' ');
+            statement.push_str(line);
+        }
+        if !line.contains(';') {
+            continue;
+        }
+        if let Some(rule) = parse_allow_rule(&statement) {
+            rules.push(rule);
+            if rules.len() >= MAX_POLICY_RULES {
+                truncated = true;
+                break;
+            }
+        }
+        statement.clear();
+    }
+    (rules, truncated)
+}
+
+fn parse_allow_rule(statement: &str) -> Option<AllowRule> {
+    let (body, extended) = if let Some(body) = statement.strip_prefix("allow ") {
+        (body, false)
+    } else {
+        (statement.strip_prefix("allowxperm ")?, true)
+    };
+    let (_, body) = body.split_once(char::is_whitespace)?;
+    let (target, body) = body.trim_start().split_once(':')?;
+    let target = target.trim();
+    let (object_class, permissions) = body.trim_start().split_once(char::is_whitespace)?;
+    let (permissions, condition) = permissions.split_once(';')?;
+    let condition = condition.trim();
+    let (condition, condition_state) = condition
+        .strip_suffix(":True")
+        .map(|value| (value, Some("true")))
+        .or_else(|| {
+            condition
+                .strip_suffix(":False")
+                .map(|value| (value, Some("false")))
+        })
+        .unwrap_or((condition, None));
+    let condition = condition
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim();
+    let condition = (!condition.is_empty()).then(|| match condition_state {
+        Some(state) => format!("{condition} is {state}"),
+        None => condition.to_owned(),
+    });
+    let permissions = permissions.trim();
+    let permissions = permissions
+        .split_whitespace()
+        .map(|permission| permission.trim_matches(['{', '}']))
+        .filter(|permission| !permission.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if target.is_empty() || object_class.is_empty() || permissions.is_empty() {
+        return None;
+    }
+    Some(AllowRule {
+        target: target.to_owned(),
+        object_class: object_class.to_owned(),
+        permissions,
+        condition,
+        extended,
+    })
+}
+
 fn context_type(context: &str) -> Option<&str> {
     context.split(':').nth(2).filter(|value| !value.is_empty())
 }
@@ -429,6 +646,9 @@ fn print_plain(snapshot: &Snapshot) {
 }
 
 fn render_frame(snapshot: &Snapshot, state: &UiState, size: (usize, usize), color: bool) -> String {
+    if let Some(detail) = &state.process_detail {
+        return render_process_detail(snapshot, detail, state.detail_scroll, size, color);
+    }
     let (width, height) = size;
     let width = width.max(40);
     let height = height.max(12);
@@ -494,7 +714,7 @@ fn render_frame(snapshot: &Snapshot, state: &UiState, size: (usize, usize), colo
     }
     lines.push(styled(
         &fit(
-            " ↑/↓ or j/k Select   Tab/1/2/3 View   r Refresh   q/Ctrl-C Quit",
+            " ↑/↓ or j/k Select   Enter/d Process details   Tab/1/2/3 View   r Refresh   q Quit",
             width,
         ),
         "30;47",
@@ -502,6 +722,315 @@ fn render_frame(snapshot: &Snapshot, state: &UiState, size: (usize, usize), colo
     ));
     lines.truncate(height);
     format!("\x1b[H{}", lines.join("\x1b[K\r\n"))
+}
+
+fn render_process_detail(
+    snapshot: &Snapshot,
+    detail: &ProcessDetail,
+    scroll: usize,
+    size: (usize, usize),
+    color: bool,
+) -> String {
+    let (width, height) = (size.0.max(40), size.1.max(12));
+    let process = &detail.process;
+    let mut body = process_detail_lines(snapshot, detail);
+    let total_lines = body.len();
+    let body_height = height.saturating_sub(4).max(1);
+    let max_scroll = body.len().saturating_sub(body_height);
+    let scroll = scroll.min(max_scroll);
+    let mut lines = vec![styled(
+        &fit(
+            &format!(
+                " Process details  PID {}  {}  SELinux: {} ",
+                process.pid, process.command, snapshot.enforcement
+            ),
+            width,
+        ),
+        "1;97;44",
+        color,
+    )];
+    lines.push(row_style(
+        &fit(
+            &format!(
+                " Protection: {}   Domain: {} ",
+                kind_name(process.kind),
+                process.domain
+            ),
+            width,
+        ),
+        process.kind,
+        false,
+        color,
+    ));
+    lines.push("─".repeat(width));
+    for line in body.drain(..).skip(scroll).take(body_height) {
+        lines.push(detail_line_style(&fit(&line, width), color));
+    }
+    while lines.len() < height.saturating_sub(1) {
+        lines.push(String::new());
+    }
+    lines.push(styled(
+        &fit(
+            &format!(
+                " ↑/↓ or j/k Scroll   Esc/Backspace/Enter Back   r Re-query policy   q Quit   Lines {}–{} of {}",
+                if total_lines == 0 { 0 } else { scroll + 1 },
+                (scroll + body_height).min(total_lines),
+                total_lines
+            ),
+            width,
+        ),
+        "30;47",
+        color,
+    ));
+    lines.truncate(height);
+    format!("\x1b[H{}", lines.join("\x1b[K\r\n"))
+}
+
+fn detail_line_style(line: &str, color: bool) -> String {
+    let text = line.trim_start();
+    if text.starts_with("ALLOWED") || text.starts_with("ALLOW ") || text.starts_with("ALLOW-XPERM")
+    {
+        styled(line, "32", color)
+    } else if text.starts_with("DENIED") || text.starts_with("PLANNED DENY") {
+        styled(line, "31", color)
+    } else if text.starts_with("PLANNED")
+        || text.starts_with("NOT ACTIVE")
+        || text.starts_with("NOT DENIED")
+    {
+        styled(line, "33", color)
+    } else if !line.starts_with(' ') && !line.is_empty() {
+        styled(line, "1", color)
+    } else {
+        line.to_owned()
+    }
+}
+
+fn process_detail_lines(snapshot: &Snapshot, detail: &ProcessDetail) -> Vec<String> {
+    let process = &detail.process;
+    let mut lines = vec![
+        "PROCESS IDENTITY".to_owned(),
+        format!("  Command: {}", process.command),
+        format!("  User ID: {}", process.uid),
+        format!(
+            "  Executable: {}",
+            process
+                .executable
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "not readable".to_owned())
+        ),
+        format!("  Full SELinux context: {}", process.context),
+        String::new(),
+        "HOW TO READ THIS".to_owned(),
+        "  ALLOWED means an allow rule exists. DENIED means Microvisor has an explicit deny rule.".to_owned(),
+        "  A conditional allow applies only when the condition shown on that rule selects its branch.".to_owned(),
+        "  Everything else is denied by SELinux by default unless another matching allow rule exists.".to_owned(),
+        "  AVC audit logs remain authoritative for a particular attempted operation.".to_owned(),
+    ];
+
+    if let Some(profile) = process
+        .profile_index
+        .and_then(|index| snapshot.profiles.get(index))
+    {
+        append_microvisor_policy(&mut lines, profile, snapshot);
+    } else {
+        lines.push(String::new());
+        lines.push("MICROVISOR PROFILE".to_owned());
+        lines.extend(
+            restriction_explanation(process.kind, process.profile_index, snapshot)
+                .into_iter()
+                .map(|line| format!("  {line}")),
+        );
+    }
+
+    lines.push(String::new());
+    append_loaded_policy(&mut lines, &detail.policy);
+    lines
+}
+
+fn append_microvisor_policy(
+    lines: &mut Vec<String>,
+    profile: &SupervisionProfile,
+    snapshot: &Snapshot,
+) {
+    let ids = profile.profile.identifiers();
+    let active = profile.applied;
+    lines.push(String::new());
+    lines.push(format!(
+        "MICROVISOR PROFILE — {} ({})",
+        profile.profile.name,
+        profile_source(profile, snapshot)
+    ));
+    if !active {
+        lines.push("  NOT ACTIVE: the following rules are planned by configuration, not installed protection.".to_owned());
+    }
+    lines.push(format!(
+        "  {} launch: {} executing the labeled program transitions into {}.",
+        if active { "ALLOWED" } else { "PLANNED" },
+        profile.profile.launch_domain,
+        ids.app_type
+    ));
+    lines.push(format!(
+        "  {} protected data: this domain may list, search, read, create, change, rename, and delete",
+        if active { "ALLOWED" } else { "PLANNED" }
+    ));
+    lines.push(
+        "    directories, regular files, links, FIFOs, and local socket files under these paths:"
+            .to_owned(),
+    );
+    for path in &profile.profile.data_directories {
+        lines.push(format!("      - {}", path.display()));
+    }
+    lines.push(format!(
+        "  {} direct data access: every SELinux subject type except {} is blocked from all",
+        if active { "DENIED" } else { "PLANNED DENY" },
+        ids.app_type
+    ));
+    lines.push(format!(
+        "    permissions on data labeled {} (directories, files, links, devices, FIFOs, sockets).",
+        ids.data_type
+    ));
+    lines.push(format!(
+        "  {} ptrace/debugging by other domains: {}.",
+        if profile.profile.block_ptrace {
+            if active { "DENIED" } else { "PLANNED DENY" }
+        } else {
+            "NOT DENIED"
+        },
+        if profile.profile.block_ptrace {
+            "blocked by this profile"
+        } else {
+            "not blocked by this profile"
+        }
+    ));
+    lines.push(format!(
+        "  {} use of file descriptors opened by this process from other domains: {}.",
+        if profile.profile.block_fd_use {
+            if active { "DENIED" } else { "PLANNED DENY" }
+        } else {
+            "NOT DENIED"
+        },
+        if profile.profile.block_fd_use {
+            "blocked by this profile"
+        } else {
+            "not blocked by this profile"
+        }
+    ));
+    lines.push(
+        "  Compatibility note: the application domain also inherits broad unconfined-policy allows"
+            .to_owned(),
+    );
+    lines.push(
+        "    for resources outside its protected data type; it is not a general-purpose sandbox."
+            .to_owned(),
+    );
+}
+
+fn append_loaded_policy(lines: &mut Vec<String>, inspection: &PolicyInspection) {
+    lines.push("LOADED SELINUX ALLOW RULES".to_owned());
+    match inspection {
+        PolicyInspection::Unavailable(message) => {
+            lines.push(format!("  UNAVAILABLE: {message}"));
+            lines.push(
+                "  No additional permission or denial claim is made from the system policy."
+                    .to_owned(),
+            );
+        }
+        PolicyInspection::Rules { rules, .. } if rules.is_empty() => {
+            lines.push("  No matching allow rules were reported for this domain.".to_owned());
+            lines.push("  This does not prove every operation is denied; attribute and conditional policy may apply.".to_owned());
+        }
+        PolicyInspection::Rules { rules, truncated } => {
+            let mut categories = BTreeMap::<&str, usize>::new();
+            for rule in rules {
+                *categories
+                    .entry(rule_category(&rule.object_class))
+                    .or_default() += 1;
+            }
+            if rules.len() > MAX_DISPLAYED_POLICY_RULES {
+                lines.push(format!(
+                    "  Showing the first {MAX_DISPLAYED_POLICY_RULES} rules of {}; use sesearch for a narrower query.",
+                    rules.len()
+                ));
+            }
+            lines.push(format!(
+                "  sesearch found {} matching allow rule(s) in the currently loaded policy.",
+                rules.len()
+            ));
+            lines.push(format!(
+                "  Summary: {}",
+                categories
+                    .into_iter()
+                    .map(|(category, count)| format!("{category} {count}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            lines.push("  Concrete rules (target type : object class — permissions):".to_owned());
+            for rule in rules.iter().take(MAX_DISPLAYED_POLICY_RULES) {
+                let condition = rule
+                    .condition
+                    .as_deref()
+                    .map(|value| format!(" when {value}"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "    {} {}: {} : {} — {} [{}]{}",
+                    if rule.extended {
+                        "ALLOW-XPERM"
+                    } else {
+                        "ALLOW"
+                    },
+                    rule_category(&rule.object_class),
+                    rule.target,
+                    rule.object_class,
+                    friendly_permissions(&rule.permissions),
+                    rule.permissions.join(" "),
+                    condition
+                ));
+            }
+            if *truncated {
+                lines.push(format!(
+                    "  Output was capped at {MAX_POLICY_RULES} rules for safety."
+                ));
+            }
+        }
+    }
+    lines.push(String::new());
+    lines.push("DENIED BY DEFAULT".to_owned());
+    lines.push("  SELinux does not keep a finite list of every rejected action. An action with no matching".to_owned());
+    lines.push(
+        "  allow rule is rejected while Enforcing; check AVC logs to explain a real rejection."
+            .to_owned(),
+    );
+}
+
+fn rule_category(object_class: &str) -> &'static str {
+    match object_class {
+        "dir" | "file" | "lnk_file" | "chr_file" | "blk_file" | "sock_file" | "fifo_file"
+        | "filesystem" => "files",
+        "tcp_socket" | "udp_socket" | "rawip_socket" | "unix_stream_socket"
+        | "unix_dgram_socket" | "node" | "netif" | "packet" => "network",
+        "process" | "process2" | "fd" => "process control",
+        _ => "other",
+    }
+}
+
+fn friendly_permissions(permissions: &[String]) -> String {
+    let mut actions = BTreeSet::new();
+    for permission in permissions {
+        let action = match permission.as_str() {
+            "read" | "open" | "getattr" | "search" | "map" => "read/inspect",
+            "write" | "append" | "create" | "add_name" | "remove_name" | "unlink" | "rename"
+            | "setattr" => "create/change/delete",
+            "execute" | "execute_no_trans" | "entrypoint" | "transition" => "execute/transition",
+            "connect" | "name_connect" | "listen" | "accept" | "bind" => "connect/listen",
+            "send_msg" | "recv_msg" | "sendto" | "recvfrom" => "send/receive",
+            "signal" | "sigkill" | "sigstop" | "ptrace" => "control another process",
+            "use" => "use inherited/open descriptor",
+            _ => "other operation",
+        };
+        actions.insert(action);
+    }
+    actions.into_iter().collect::<Vec<_>>().join(", ")
 }
 
 fn render_processes(
@@ -896,6 +1425,8 @@ enum Key {
     Quit,
     Up,
     Down,
+    Open,
+    Back,
     Switch(View),
     Refresh,
     Ignored,
@@ -906,6 +1437,8 @@ fn parse_key(bytes: &[u8], current: View) -> Key {
         b"q" | b"Q" | [3] => Key::Quit,
         b"k" | b"K" | b"\x1b[A" => Key::Up,
         b"j" | b"J" | b"\x1b[B" => Key::Down,
+        b"\r" | b"\n" | b"d" | b"D" => Key::Open,
+        b"\x1b" | [8] | [127] => Key::Back,
         b"1" => Key::Switch(View::Processes),
         b"2" => Key::Switch(View::Executables),
         b"3" => Key::Switch(View::Rules),
@@ -1054,6 +1587,57 @@ mod tests {
     }
 
     #[test]
+    fn parses_single_and_multiline_allow_rules() {
+        let output = r#"
+allow sshd_t ssh_home_t : file { getattr open read map };
+allow sshd_t http_port_t:tcp_socket {
+    name_connect
+}; [ ssh_sysadm_login ]:True
+allowxperm sshd_t device_t:chr_file ioctl { 0x1234 0x1235 };
+type_transition sshd_t user_t:process staff_t;
+"#;
+        let (rules, truncated) = parse_allow_rules(output);
+        assert!(!truncated);
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].target, "ssh_home_t");
+        assert_eq!(rules[0].object_class, "file");
+        assert_eq!(rules[0].permissions, ["getattr", "open", "read", "map"]);
+        assert_eq!(rules[0].condition, None);
+        assert!(!rules[0].extended);
+        assert_eq!(rules[1].target, "http_port_t");
+        assert_eq!(rules[1].object_class, "tcp_socket");
+        assert_eq!(rules[1].permissions, ["name_connect"]);
+        assert_eq!(
+            rules[1].condition.as_deref(),
+            Some("ssh_sysadm_login is true")
+        );
+        assert!(!rules[1].extended);
+        assert_eq!(rules[2].target, "device_t");
+        assert_eq!(rules[2].object_class, "chr_file");
+        assert!(rules[2].permissions.contains(&"ioctl".to_owned()));
+        assert!(rules[2].extended);
+
+        let (rules, _) =
+            parse_allow_rules("allow sshd_t shadow_t:file read; [ ssh_sysadm_login ]:False");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].condition.as_deref(),
+            Some("ssh_sysadm_login is false")
+        );
+    }
+
+    #[test]
+    fn translates_policy_permissions_without_hiding_raw_permissions() {
+        let permissions = vec!["open".to_owned(), "read".to_owned(), "ioctl".to_owned()];
+        assert_eq!(
+            friendly_permissions(&permissions),
+            "other operation, read/inspect"
+        );
+        assert_eq!(rule_category("tcp_socket"), "network");
+        assert_eq!(rule_category("process"), "process control");
+    }
+
+    #[test]
     fn classifies_domains_without_overstating_unconfined_protection() {
         assert_eq!(
             classify_domain("unconfined_t", false),
@@ -1099,6 +1683,71 @@ mod tests {
     }
 
     #[test]
+    fn renders_process_detail_with_exact_allow_and_deny_explanations() {
+        let profile = profile();
+        let ids = profile.profile.identifiers();
+        let process = ProcessRow {
+            pid: 42,
+            uid: 1000,
+            command: "browser".into(),
+            executable: Some("/opt/browser/browser".into()),
+            context: format!("system_u:system_r:{}:s0", ids.app_type),
+            domain: ids.app_type.clone(),
+            kind: ProtectionKind::Microvisor,
+            profile_index: Some(0),
+        };
+        let snapshot = Snapshot {
+            enforcement: "Enforcing".into(),
+            profiles: vec![profile],
+            processes: vec![process.clone()],
+            executables: Vec::new(),
+            rules: Vec::new(),
+            rule_error: None,
+        };
+        let detail = ProcessDetail {
+            process,
+            policy: PolicyInspection::Rules {
+                rules: vec![AllowRule {
+                    target: "http_port_t".into(),
+                    object_class: "tcp_socket".into(),
+                    permissions: vec!["name_connect".into()],
+                    condition: Some("browser_can_network is true".into()),
+                    extended: false,
+                }],
+                truncated: false,
+            },
+        };
+        let frame = render_process_detail(&snapshot, &detail, 0, (180, 40), false);
+        assert!(frame.contains("ALLOWED protected data"));
+        assert!(frame.contains("DENIED direct data access"));
+        assert!(frame.contains("DENIED ptrace/debugging"));
+        assert!(frame.contains("NOT DENIED use of file descriptors"));
+        assert!(frame.contains("ALLOW network: http_port_t : tcp_socket"));
+        assert!(frame.contains("when browser_can_network is true"));
+        assert!(frame.contains("Anything else") || frame.contains("DENIED BY DEFAULT"));
+    }
+
+    #[test]
+    fn labels_configured_only_profile_rules_as_planned() {
+        let mut profile = profile();
+        profile.applied = false;
+        let snapshot = Snapshot {
+            enforcement: "Enforcing".into(),
+            profiles: vec![profile.clone()],
+            processes: Vec::new(),
+            executables: Vec::new(),
+            rules: Vec::new(),
+            rule_error: None,
+        };
+        let mut lines = Vec::new();
+        append_microvisor_policy(&mut lines, &profile, &snapshot);
+        let text = lines.join("\n");
+        assert!(text.contains("NOT ACTIVE"));
+        assert!(text.contains("PLANNED DENY direct data access"));
+        assert!(!text.contains("DENIED direct data access"));
+    }
+
+    #[test]
     fn parses_navigation_keys() {
         assert_eq!(parse_key(b"\x1b[A", View::Processes), Key::Up);
         assert_eq!(
@@ -1106,6 +1755,8 @@ mod tests {
             Key::Switch(View::Executables)
         );
         assert_eq!(parse_key(&[3], View::Rules), Key::Quit);
+        assert_eq!(parse_key(b"\n", View::Processes), Key::Open);
+        assert_eq!(parse_key(b"\x1b", View::Processes), Key::Back);
     }
 
     #[test]

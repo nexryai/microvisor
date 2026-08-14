@@ -153,6 +153,10 @@ Exit criteria:
 - [x] Add a dependency-free `supervise` terminal inspector for live process domains, executable
   labels, Microvisor restrictions, and system executable file-context rules, with a non-TTY
   snapshot mode for automation and logs.
+- [x] Add an Enter-driven, scrollable process detail screen that distinguishes active Microvisor
+  denies from configured-only plans, translates loaded allow rules into beginner-friendly action
+  groups without hiding raw SELinux permissions, and degrades explicitly when optional `sesearch`
+  is unavailable.
 - [x] Add a manual page covering configuration ownership, deployment, status, rollback, and
   emergency recovery.
 
