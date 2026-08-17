@@ -1,7 +1,7 @@
 %bcond check 1
 
 Name:           microvisor
-Version:        0.1.1
+Version:        0.1.2
 Release:        1%{?buildtag}%{?dist}
 Summary:        Headless SELinux protection profile manager
 
@@ -25,6 +25,7 @@ Requires:       libselinux-utils >= 3.6
 Requires:       m4
 Requires:       policycoreutils >= 3.6
 Requires:       policycoreutils-python-utils >= 3.6
+Requires:       setools-console
 Requires:       /usr/share/selinux/devel/include/build.conf
 
 %description
@@ -75,5 +76,9 @@ cargo test --release --locked
 %config(noreplace) %attr(0600,root,root) %{_sysconfdir}/microvisor.yml
 
 %changelog
+* Mon Aug 17 2026 Nexryai <nexryai@users.noreply.github.com> - 0.1.2-1
+- Add process policy details to supervise
+- Require setools-console for loaded SELinux allow-rule inspection
+
 * Tue Aug 11 2026 Nexryai <nexryai@users.noreply.github.com> - 0.1.0-1
 - Replace the desktop application and Polkit helper with a root YAML CLI

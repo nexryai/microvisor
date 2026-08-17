@@ -31,8 +31,8 @@ The initial target is Fedora 44 Server and Workstation with SELinux Enforcing an
 
 - Rust 1.85 or newer for building;
 - SELinux userspace 3.6 or newer, because Microvisor relies on CIL `deny` rules;
-- `policycoreutils`, `policycoreutils-python-utils`, `libselinux-utils`, `checkpolicy`, `m4`, and the
-  reference-policy headers from `selinux-policy-devel`.
+- `policycoreutils`, `policycoreutils-python-utils`, `libselinux-utils`, `checkpolicy`, `m4`,
+  `setools-console`, and the reference-policy headers from `selinux-policy-devel`.
 
 GTK, Libadwaita, a display server, a desktop environment, and Polkit are not required. Server
 support means headless operation on explicitly tested SELinux distributions; it does not imply
@@ -44,7 +44,7 @@ CI container provisioning example (the CI container runs as root):
 dnf install \
   cargo rust \
   policycoreutils policycoreutils-python-utils \
-  libselinux-utils selinux-policy-devel checkpolicy m4
+  libselinux-utils selinux-policy-devel checkpolicy m4 setools-console
 ```
 
 Provision equivalent dependencies before entering a local development environment. Development
@@ -184,10 +184,11 @@ sudo microvisor remove <profile-id>
   Microvisor profiles, and system `*_exec_t` file-context rules. In the process view, press `Enter`
   or `d` for a scrollable explanation of the selected process: identity, exact active or planned
   Microvisor data/ptrace/file-descriptor rules, loaded SELinux allow rules grouped into plain-language
-  file, network, and process-control actions, and the default-deny boundary. `sesearch` is used when
-  available to inspect the loaded distribution policy; it is optional, and the screen explicitly
-  reports when those extra details cannot be queried. Allowed rules are green, explicit and default
-  denies are red, and configured-only plans are yellow. Use arrow keys or `j`/`k` to move or scroll,
+  file, network, and process-control actions, and the default-deny boundary. The screen uses
+  `sesearch` to inspect the loaded distribution policy; the RPM installs it through its required
+  `setools-console` dependency. The screen still reports an actionable error if policy inspection
+  fails. Allowed rules are green, explicit and default denies are red, and configured-only plans are
+  yellow. Use arrow keys or `j`/`k` to move or scroll,
   `Esc`, Backspace, or `Enter` to leave details, `Tab` or `1`/`2`/`3` to switch views, `r` to reload,
   and `q` to quit. When standard input or output is not a terminal, it prints one tab-separated
   process snapshot instead.

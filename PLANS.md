@@ -155,8 +155,8 @@ Exit criteria:
   snapshot mode for automation and logs.
 - [x] Add an Enter-driven, scrollable process detail screen that distinguishes active Microvisor
   denies from configured-only plans, translates loaded allow rules into beginner-friendly action
-  groups without hiding raw SELinux permissions, and degrades explicitly when optional `sesearch`
-  is unavailable.
+  groups without hiding raw SELinux permissions, requires the Fedora `setools-console` provider,
+  and degrades explicitly if `sesearch` cannot query the loaded policy.
 - [x] Add a manual page covering configuration ownership, deployment, status, rollback, and
   emergency recovery.
 

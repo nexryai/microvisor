@@ -49,7 +49,7 @@ domains, executable labels, Microvisor restrictions, and system executable
 file-context rules. Arrow keys or j/k select a row; Tab or 1/2/3 changes view;
 Enter or d opens a scrollable process detail screen; Escape, Backspace, or
 Enter returns to the list. The detail screen explains active versus planned
-Microvisor allow and deny rules and, when sesearch is available, groups loaded
+Microvisor allow and deny rules and uses sesearch to group loaded
 SELinux allow rules into file, network, process-control, and other operations
 while retaining their raw permission names. r refreshes policy details; q or
 Control-C exits. If standard input or output is not a terminal, print one
@@ -83,9 +83,9 @@ Makefile, or general-purpose build system is executed.
 The supervise command classifies Microvisor domains, system-policy domains,
 unconfined domains, and unreadable labels. File-context entries describe
 label assignment, not the complete allow graph. Its process detail screen shows
-the exact configured Microvisor complement and optionally queries the loaded
-policy with sesearch. sesearch is not a required runtime dependency; if it is
-unavailable, no distribution-policy decision is inferred. SELinux default-denies
+the exact configured Microvisor complement and queries the loaded policy with
+sesearch, supplied by the required setools-console package. If policy inspection
+fails, no distribution-policy decision is inferred. SELinux default-denies
 operations without a matching allow, and AVC logs remain authoritative for a
 specific attempted action.
 .SH RECOVERY
