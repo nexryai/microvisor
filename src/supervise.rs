@@ -19,6 +19,7 @@ use std::{
 
 const MAX_FCONTEXT_OUTPUT: u64 = 16 * 1024 * 1024;
 const MAX_POLICY_OUTPUT: u64 = 16 * 1024 * 1024;
+const MAX_POLICY_ERROR_OUTPUT: u64 = 64 * 1024;
 const MAX_POLICY_RULES: usize = 20_000;
 const MAX_DISPLAYED_POLICY_RULES: usize = 1_000;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -441,7 +442,7 @@ fn inspect_process_policy(domain: &str) -> PolicyInspection {
             );
         }
     };
-    command.args(["-A", "-C", "-s", domain]);
+    command.args(policy_query_arguments(domain));
     let output = match read_bounded_output(
         &mut command,
         MAX_POLICY_OUTPUT,
@@ -464,36 +465,83 @@ fn inspect_process_policy(domain: &str) -> PolicyInspection {
     PolicyInspection::Rules { rules, truncated }
 }
 
+fn policy_query_arguments(domain: &str) -> [&str; 3] {
+    // SETools 4.6 removed the legacy -C option and includes conditional expressions in its normal
+    // rule formatting. The remaining options also work on older versions without causing argparse
+    // to terminate with exit status 2.
+    ["-A", "-s", domain]
+}
+
 fn read_bounded_output(
     command: &mut Command,
     limit: u64,
     output_name: &str,
     spawn_context: &str,
 ) -> Result<String> {
-    command.stdout(Stdio::piped()).stderr(Stdio::null());
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().with_context(|| spawn_context.to_owned())?;
+    let stderr = child
+        .stderr
+        .take()
+        .with_context(|| format!("Could not capture {output_name} errors"))?;
+    let stderr_reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stderr
+            .take(MAX_POLICY_ERROR_OUTPUT + 1)
+            .read_to_end(&mut output)?;
+        let truncated = output.len() as u64 > MAX_POLICY_ERROR_OUTPUT;
+        output.truncate(MAX_POLICY_ERROR_OUTPUT as usize);
+        Ok::<_, io::Error>((output, truncated))
+    });
     let mut output = Vec::new();
-    child
+    let stdout_result = child
         .stdout
         .take()
         .with_context(|| format!("Could not capture {output_name}"))?
         .take(limit + 1)
-        .read_to_end(&mut output)?;
-    if output.len() as u64 > limit {
+        .read_to_end(&mut output);
+    let output_too_large = output.len() as u64 > limit;
+    if output_too_large {
         // Stop the producer before waiting, since this bounded reader deliberately stopped
         // consuming its pipe. Policy output is host-controlled but must not exhaust root memory.
         let _ = child.kill();
-        let _ = child.wait();
+    }
+    let status = child.wait()?;
+    let (stderr, stderr_truncated) = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("Could not join the {output_name} error reader"))??;
+    stdout_result?;
+    if output_too_large {
         bail!(
             "{output_name} exceeds the {} MiB safety limit",
             limit / 1024 / 1024
         );
     }
-    let status = child.wait()?;
     if !status.success() {
-        bail!("policy query exited with {status}");
+        let stderr = summarize_command_error(&stderr);
+        if stderr.is_empty() {
+            bail!("policy query exited with {status}");
+        }
+        bail!(
+            "policy query exited with {status}: {stderr}{}",
+            if stderr_truncated {
+                " (error output truncated)"
+            } else {
+                ""
+            }
+        );
     }
     String::from_utf8(output).with_context(|| format!("{output_name} is not UTF-8"))
+}
+
+fn summarize_command_error(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(clean)
+        .unwrap_or_default()
 }
 
 fn parse_allow_rules(output: &str) -> (Vec<AllowRule>, bool) {
@@ -1624,6 +1672,23 @@ type_transition sshd_t user_t:process staff_t;
             rules[0].condition.as_deref(),
             Some("ssh_sysadm_login is false")
         );
+    }
+
+    #[test]
+    fn uses_setools_4_6_compatible_policy_query_arguments() {
+        let arguments = policy_query_arguments("sshd_t");
+        assert_eq!(arguments, ["-A", "-s", "sshd_t"]);
+        assert!(!arguments.contains(&"-C"));
+    }
+
+    #[test]
+    fn reports_the_actionable_final_policy_query_error_safely() {
+        let stderr = b"usage: sesearch [options]\nsesearch: error: unrecognized arguments: -C\n";
+        assert_eq!(
+            summarize_command_error(stderr),
+            "sesearch: error: unrecognized arguments: -C"
+        );
+        assert_eq!(summarize_command_error(b"bad\x1b[2J\n"), "bad�[2J");
     }
 
     #[test]

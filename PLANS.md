@@ -156,7 +156,8 @@ Exit criteria:
 - [x] Add an Enter-driven, scrollable process detail screen that distinguishes active Microvisor
   denies from configured-only plans, translates loaded allow rules into beginner-friendly action
   groups without hiding raw SELinux permissions, requires the Fedora `setools-console` provider,
-  and degrades explicitly if `sesearch` cannot query the loaded policy.
+  uses SETools 4.6-compatible query arguments, and degrades explicitly with bounded stderr if
+  `sesearch` cannot query the loaded policy.
 - [x] Add a manual page covering configuration ownership, deployment, status, rollback, and
   emergency recovery.
 

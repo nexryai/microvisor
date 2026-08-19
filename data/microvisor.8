@@ -87,7 +87,8 @@ the exact configured Microvisor complement and queries the loaded policy with
 sesearch, supplied by the required setools-console package. If policy inspection
 fails, no distribution-policy decision is inferred. SELinux default-denies
 operations without a matching allow, and AVC logs remain authoritative for a
-specific attempted action.
+specific attempted action. Microvisor uses the SETools 4.6-compatible
+"sesearch -A -s domain" form and does not pass the removed legacy -C option.
 .SH RECOVERY
 Use
 .B microvisor remove

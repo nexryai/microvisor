@@ -208,6 +208,8 @@ detail screen distinguishes installed Microvisor denies from configured-only pla
 rules found in the currently loaded distribution policy. SELinux normally records what is allowed,
 not a finite list of everything denied, so the screen labels absence of an allow as default-deny and
 still directs administrators to AVC logs for the authoritative explanation of an attempted action.
+Microvisor uses the SETools 4.6-compatible `sesearch -A -s <domain>` form; the removed legacy `-C`
+option must not be reintroduced.
 
 ## Diagnostics
 

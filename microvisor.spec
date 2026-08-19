@@ -79,6 +79,7 @@ cargo test --release --locked
 * Mon Aug 17 2026 Nexryai <nexryai@users.noreply.github.com> - 0.1.2-1
 - Add process policy details to supervise
 - Require setools-console for loaded SELinux allow-rule inspection
+- Use SETools 4.6-compatible policy query arguments
 
 * Tue Aug 11 2026 Nexryai <nexryai@users.noreply.github.com> - 0.1.0-1
 - Replace the desktop application and Polkit helper with a root YAML CLI
