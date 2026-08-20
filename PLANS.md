@@ -158,6 +158,10 @@ Exit criteria:
   groups without hiding raw SELinux permissions, requires the Fedora `setools-console` provider,
   uses SETools 4.6-compatible query arguments, and degrades explicitly with bounded stderr if
   `sesearch` cannot query the loaded policy.
+- [x] Replace the irrelevant Microvisor-profile block for system-policy processes with a
+  path-oriented permission list. Correlate loaded allow targets with file-context patterns and show
+  read and write matches separately for home directories, `/etc`, and sensitive `/var` subtrees,
+  without turning partial or conditional matches into whole-directory claims.
 - [x] Add a manual page covering configuration ownership, deployment, status, rollback, and
   emergency recovery.
 

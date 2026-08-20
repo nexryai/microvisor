@@ -51,7 +51,13 @@ Enter or d opens a scrollable process detail screen; Escape, Backspace, or
 Enter returns to the list. The detail screen explains active versus planned
 Microvisor allow and deny rules and uses sesearch to group loaded
 SELinux allow rules into file, network, process-control, and other operations
-while retaining their raw permission names. r refreshes policy details; q or
+while retaining their raw permission names. For system-policy processes, the
+Microvisor-profile section is replaced by a permission list for labeled content
+under home directories, /etc, /var/lib, /var/log, /var/spool, and other /var
+paths. Read and write are reported separately as allowed, conditional, or with
+no matching allow found. A listed allow applies only to some matching labels and
+does not override Unix permissions or other SELinux constraints. r refreshes
+policy details; q or
 Control-C exits. If standard input or output is not a terminal, print one
 tab-separated process snapshot and exit.
 .TP
@@ -85,7 +91,9 @@ unconfined domains, and unreadable labels. File-context entries describe
 label assignment, not the complete allow graph. Its process detail screen shows
 the exact configured Microvisor complement and queries the loaded policy with
 sesearch, supplied by the required setools-console package. If policy inspection
-fails, no distribution-policy decision is inferred. SELinux default-denies
+and file-context mapping succeed, the system-policy detail screen correlates
+allow targets with path patterns to produce its file-permission list. If either
+inspection fails, no distribution-policy decision is inferred. SELinux default-denies
 operations without a matching allow, and AVC logs remain authoritative for a
 specific attempted action. Microvisor uses the SETools 4.6-compatible
 "sesearch -A -s domain" form and does not pass the removed legacy -C option.

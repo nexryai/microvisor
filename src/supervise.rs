@@ -69,6 +69,12 @@ struct FcontextRule {
     profile_index: Option<usize>,
 }
 
+#[derive(Debug, Default)]
+struct FcontextSnapshot {
+    executable_rules: Vec<FcontextRule>,
+    paths_by_type: BTreeMap<String, BTreeSet<String>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct AllowRule {
     target: String,
@@ -93,6 +99,45 @@ struct ProcessDetail {
     policy: PolicyInspection,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PathScope {
+    Home,
+    Etc,
+    VarLib,
+    VarLog,
+    VarSpool,
+    OtherVar,
+}
+
+const PATH_SCOPES: [(PathScope, &str); 6] = [
+    (PathScope::Home, "Home directory contents"),
+    (PathScope::Etc, "System configuration (/etc)"),
+    (
+        PathScope::VarLib,
+        "Service and application state (/var/lib)",
+    ),
+    (PathScope::VarLog, "System and service logs (/var/log)"),
+    (
+        PathScope::VarSpool,
+        "Queues, mail, and spool data (/var/spool)",
+    ),
+    (PathScope::OtherVar, "Other sensitive variable data (/var)"),
+];
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PermissionEvidence {
+    unconditional: bool,
+    conditional: bool,
+    targets: BTreeSet<String>,
+    patterns: BTreeSet<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ScopePermissions {
+    read: PermissionEvidence,
+    write: PermissionEvidence,
+}
+
 #[derive(Debug)]
 struct Snapshot {
     enforcement: String,
@@ -100,6 +145,7 @@ struct Snapshot {
     processes: Vec<ProcessRow>,
     executables: Vec<ExecutableRow>,
     rules: Vec<FcontextRule>,
+    paths_by_type: BTreeMap<String, BTreeSet<String>>,
     rule_error: Option<String>,
 }
 
@@ -229,9 +275,9 @@ fn collect_snapshot(profiles: Vec<SupervisionProfile>) -> Snapshot {
     };
     let processes = collect_processes(&profiles);
     let executables = collect_executables(&profiles, &processes);
-    let (rules, rule_error) = match collect_fcontext_rules(&profiles) {
-        Ok(rules) => (rules, None),
-        Err(error) => (Vec::new(), Some(format!("{error:#}"))),
+    let (rules, paths_by_type, rule_error) = match collect_fcontext_rules(&profiles) {
+        Ok(contexts) => (contexts.executable_rules, contexts.paths_by_type, None),
+        Err(error) => (Vec::new(), BTreeMap::new(), Some(format!("{error:#}"))),
     };
     Snapshot {
         enforcement,
@@ -239,6 +285,7 @@ fn collect_snapshot(profiles: Vec<SupervisionProfile>) -> Snapshot {
         processes,
         executables,
         rules,
+        paths_by_type,
         rule_error,
     }
 }
@@ -338,7 +385,7 @@ fn collect_executables(
     rows
 }
 
-fn collect_fcontext_rules(profiles: &[SupervisionProfile]) -> Result<Vec<FcontextRule>> {
+fn collect_fcontext_rules(profiles: &[SupervisionProfile]) -> Result<FcontextSnapshot> {
     let mut command = engine::trusted_command("semanage")?;
     command
         .args(["fcontext", "-l"])
@@ -366,9 +413,19 @@ fn collect_fcontext_rules(profiles: &[SupervisionProfile]) -> Result<Vec<Fcontex
         bail!("semanage fcontext -l exited with {status}");
     }
     let text = String::from_utf8(output).context("SELinux file-context output is not UTF-8")?;
-    let mut rules = text
+    let parsed = text
         .lines()
         .filter_map(parse_fcontext_rule)
+        .collect::<Vec<_>>();
+    let mut paths_by_type = BTreeMap::<String, BTreeSet<String>>::new();
+    for rule in &parsed {
+        paths_by_type
+            .entry(rule.selinux_type.clone())
+            .or_default()
+            .insert(rule.pattern.clone());
+    }
+    let mut rules = parsed
+        .into_iter()
         .filter(|rule| rule.selinux_type.ends_with("_exec_t"))
         .map(|mut rule| {
             rule.profile_index = profiles
@@ -392,7 +449,10 @@ fn collect_fcontext_rules(profiles: &[SupervisionProfile]) -> Result<Vec<Fcontex
     rules.dedup_by(|left, right| {
         left.pattern == right.pattern && left.selinux_type == right.selinux_type
     });
-    Ok(rules)
+    Ok(FcontextSnapshot {
+        executable_rules: rules,
+        paths_by_type,
+    })
 }
 
 fn parse_fcontext_rule(line: &str) -> Option<FcontextRule> {
@@ -881,9 +941,12 @@ fn process_detail_lines(snapshot: &Snapshot, detail: &ProcessDetail) -> Vec<Stri
         .and_then(|index| snapshot.profiles.get(index))
     {
         append_microvisor_policy(&mut lines, profile, snapshot);
+    } else if process.kind == ProtectionKind::System {
+        lines.push(String::new());
+        append_system_file_permissions(&mut lines, &detail.policy, snapshot);
     } else {
         lines.push(String::new());
-        lines.push("MICROVISOR PROFILE".to_owned());
+        lines.push("PROTECTION SUMMARY".to_owned());
         lines.extend(
             restriction_explanation(process.kind, process.profile_index, snapshot)
                 .into_iter()
@@ -894,6 +957,195 @@ fn process_detail_lines(snapshot: &Snapshot, detail: &ProcessDetail) -> Vec<Stri
     lines.push(String::new());
     append_loaded_policy(&mut lines, &detail.policy);
     lines
+}
+
+fn append_system_file_permissions(
+    lines: &mut Vec<String>,
+    inspection: &PolicyInspection,
+    snapshot: &Snapshot,
+) {
+    lines.push("SYSTEM FILE PERMISSIONS".to_owned());
+    lines.push(
+        "  A check mark means the loaded SELinux policy has a matching allow for some labeled"
+            .to_owned(),
+    );
+    lines.push(
+        "  content in that location. It does not mean every file there is accessible; ordinary"
+            .to_owned(),
+    );
+    lines.push(
+        "  Unix permissions, SELinux conditions, and finer-grained labels still apply.".to_owned(),
+    );
+
+    let PolicyInspection::Rules { rules, .. } = inspection else {
+        lines.push("  UNAVAILABLE: loaded-policy permissions could not be summarized.".to_owned());
+        return;
+    };
+    let permissions = summarize_path_permissions(rules, &snapshot.paths_by_type);
+    for (scope, title) in PATH_SCOPES {
+        lines.push(format!("  {title}"));
+        let access = permissions.get(&scope);
+        append_permission_evidence(
+            lines,
+            "Read or inspect contents",
+            access.map(|item| &item.read),
+        );
+        append_permission_evidence(
+            lines,
+            "Create, change, or delete contents",
+            access.map(|item| &item.write),
+        );
+    }
+    if snapshot.rule_error.is_some() {
+        lines.push(
+            "  Note: file-context paths were unavailable, so this list may omit labeled areas."
+                .to_owned(),
+        );
+    }
+}
+
+fn append_permission_evidence(
+    lines: &mut Vec<String>,
+    action: &str,
+    evidence: Option<&PermissionEvidence>,
+) {
+    let Some(evidence) = evidence.filter(|item| item.unconditional || item.conditional) else {
+        lines.push(format!(
+            "    — {action}: NO MATCHING ALLOW found in this summary"
+        ));
+        return;
+    };
+    let state = if evidence.unconditional {
+        "✓ ALLOWED for some labeled content"
+    } else {
+        "◇ CONDITIONAL for some labeled content"
+    };
+    let examples = evidence
+        .patterns
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>();
+    let detail = if examples.is_empty() {
+        evidence
+            .targets
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        examples.join(", ")
+    };
+    lines.push(format!("    {state} — {action}"));
+    if !detail.is_empty() {
+        lines.push(format!("      Matches: {detail}"));
+    }
+}
+
+fn summarize_path_permissions(
+    rules: &[AllowRule],
+    paths_by_type: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<PathScope, ScopePermissions> {
+    let mut summary = BTreeMap::<PathScope, ScopePermissions>::new();
+    for rule in rules {
+        if !is_file_object_class(&rule.object_class) {
+            continue;
+        }
+        let Some(patterns) = paths_by_type.get(&rule.target) else {
+            continue;
+        };
+        let read = rule.permissions.iter().any(|permission| {
+            matches!(
+                permission.as_str(),
+                "read" | "open" | "getattr" | "search" | "map"
+            )
+        });
+        let write = rule.permissions.iter().any(|permission| {
+            matches!(
+                permission.as_str(),
+                "write"
+                    | "append"
+                    | "create"
+                    | "add_name"
+                    | "remove_name"
+                    | "unlink"
+                    | "rename"
+                    | "setattr"
+                    | "link"
+                    | "reparent"
+                    | "rmdir"
+                    | "relabelfrom"
+                    | "relabelto"
+            )
+        });
+        if !read && !write {
+            continue;
+        }
+        for pattern in patterns {
+            let Some(scope) = path_scope(pattern) else {
+                continue;
+            };
+            let access = summary.entry(scope).or_default();
+            if read {
+                record_permission_evidence(&mut access.read, rule, pattern);
+            }
+            if write {
+                record_permission_evidence(&mut access.write, rule, pattern);
+            }
+        }
+    }
+    summary
+}
+
+fn record_permission_evidence(evidence: &mut PermissionEvidence, rule: &AllowRule, pattern: &str) {
+    if rule.condition.is_some() {
+        evidence.conditional = true;
+    } else {
+        evidence.unconditional = true;
+    }
+    evidence.targets.insert(rule.target.clone());
+    evidence.patterns.insert(pattern.to_owned());
+}
+
+fn is_file_object_class(object_class: &str) -> bool {
+    matches!(
+        object_class,
+        "dir" | "file" | "lnk_file" | "chr_file" | "blk_file" | "sock_file" | "fifo_file"
+    )
+}
+
+fn path_scope(pattern: &str) -> Option<PathScope> {
+    if pattern == "/home"
+        || pattern.starts_with("/home/")
+        || pattern.starts_with("/home(")
+        || pattern == "/root"
+        || pattern.starts_with("/root/")
+        || pattern.starts_with("/root(")
+    {
+        Some(PathScope::Home)
+    } else if pattern == "/etc" || pattern.starts_with("/etc/") || pattern.starts_with("/etc(") {
+        Some(PathScope::Etc)
+    } else if pattern == "/var/lib"
+        || pattern.starts_with("/var/lib/")
+        || pattern.starts_with("/var/lib(")
+    {
+        Some(PathScope::VarLib)
+    } else if pattern == "/var/log"
+        || pattern.starts_with("/var/log/")
+        || pattern.starts_with("/var/log(")
+    {
+        Some(PathScope::VarLog)
+    } else if pattern == "/var/spool"
+        || pattern.starts_with("/var/spool/")
+        || pattern.starts_with("/var/spool(")
+    {
+        Some(PathScope::VarSpool)
+    } else if pattern == "/var" || pattern.starts_with("/var/") || pattern.starts_with("/var(") {
+        Some(PathScope::OtherVar)
+    } else {
+        None
+    }
 }
 
 fn append_microvisor_policy(
@@ -1703,6 +1955,80 @@ type_transition sshd_t user_t:process staff_t;
     }
 
     #[test]
+    fn classifies_sensitive_path_scopes_without_folding_subtrees_into_var() {
+        assert_eq!(path_scope("/home/[^/]+/.*"), Some(PathScope::Home));
+        assert_eq!(path_scope("/root(/.*)?"), Some(PathScope::Home));
+        assert_eq!(path_scope("/etc/shadow"), Some(PathScope::Etc));
+        assert_eq!(
+            path_scope("/var/lib/postgresql(/.*)?"),
+            Some(PathScope::VarLib)
+        );
+        assert_eq!(path_scope("/var/log/audit(/.*)?"), Some(PathScope::VarLog));
+        assert_eq!(
+            path_scope("/var/spool/mail(/.*)?"),
+            Some(PathScope::VarSpool)
+        );
+        assert_eq!(path_scope("/var/cache(/.*)?"), Some(PathScope::OtherVar));
+        assert_eq!(path_scope("/usr/share"), None);
+    }
+
+    #[test]
+    fn summarizes_read_write_and_conditional_file_permissions_by_location() {
+        let rules = vec![
+            AllowRule {
+                target: "user_home_t".into(),
+                object_class: "file".into(),
+                permissions: vec!["open".into(), "read".into(), "write".into()],
+                condition: None,
+                extended: false,
+            },
+            AllowRule {
+                target: "shadow_t".into(),
+                object_class: "file".into(),
+                permissions: vec!["open".into(), "read".into()],
+                condition: Some("allow_shadow is true".into()),
+                extended: false,
+            },
+            AllowRule {
+                target: "var_log_t".into(),
+                object_class: "file".into(),
+                permissions: vec!["append".into()],
+                condition: None,
+                extended: false,
+            },
+            AllowRule {
+                target: "http_port_t".into(),
+                object_class: "tcp_socket".into(),
+                permissions: vec!["name_connect".into()],
+                condition: None,
+                extended: false,
+            },
+        ];
+        let paths = BTreeMap::from([
+            (
+                "user_home_t".into(),
+                BTreeSet::from(["/home/[^/]+(/.*)?".into()]),
+            ),
+            ("shadow_t".into(), BTreeSet::from(["/etc/shadow".into()])),
+            (
+                "var_log_t".into(),
+                BTreeSet::from(["/var/log(/.*)?".into()]),
+            ),
+        ]);
+        let summary = summarize_path_permissions(&rules, &paths);
+        let home = summary.get(&PathScope::Home).unwrap();
+        assert!(home.read.unconditional);
+        assert!(home.write.unconditional);
+        let etc = summary.get(&PathScope::Etc).unwrap();
+        assert!(!etc.read.unconditional);
+        assert!(etc.read.conditional);
+        assert_eq!(etc.read.patterns, BTreeSet::from(["/etc/shadow".into()]));
+        assert!(!etc.write.unconditional);
+        assert!(!etc.write.conditional);
+        assert!(summary.get(&PathScope::VarLog).unwrap().write.unconditional);
+    }
+
+    #[test]
     fn classifies_domains_without_overstating_unconfined_protection() {
         assert_eq!(
             classify_domain("unconfined_t", false),
@@ -1739,6 +2065,7 @@ type_transition sshd_t user_t:process staff_t;
             }],
             executables: Vec::new(),
             rules: Vec::new(),
+            paths_by_type: BTreeMap::new(),
             rule_error: None,
         };
         let frame = render_frame(&snapshot, &UiState::default(), (220, 24), false);
@@ -1767,6 +2094,7 @@ type_transition sshd_t user_t:process staff_t;
             processes: vec![process.clone()],
             executables: Vec::new(),
             rules: Vec::new(),
+            paths_by_type: BTreeMap::new(),
             rule_error: None,
         };
         let detail = ProcessDetail {
@@ -1793,6 +2121,65 @@ type_transition sshd_t user_t:process staff_t;
     }
 
     #[test]
+    fn renders_system_process_permissions_without_a_microvisor_profile_section() {
+        let process = ProcessRow {
+            pid: 7,
+            uid: 0,
+            command: "sshd".into(),
+            executable: Some("/usr/sbin/sshd".into()),
+            context: "system_u:system_r:sshd_t:s0".into(),
+            domain: "sshd_t".into(),
+            kind: ProtectionKind::System,
+            profile_index: None,
+        };
+        let snapshot = Snapshot {
+            enforcement: "Enforcing".into(),
+            profiles: Vec::new(),
+            processes: vec![process.clone()],
+            executables: Vec::new(),
+            rules: Vec::new(),
+            paths_by_type: BTreeMap::from([
+                (
+                    "ssh_home_t".into(),
+                    BTreeSet::from(["/home/[^/]+/.ssh(/.*)?".into()]),
+                ),
+                ("shadow_t".into(), BTreeSet::from(["/etc/shadow".into()])),
+            ]),
+            rule_error: None,
+        };
+        let detail = ProcessDetail {
+            process,
+            policy: PolicyInspection::Rules {
+                rules: vec![
+                    AllowRule {
+                        target: "ssh_home_t".into(),
+                        object_class: "file".into(),
+                        permissions: vec!["open".into(), "read".into(), "write".into()],
+                        condition: None,
+                        extended: false,
+                    },
+                    AllowRule {
+                        target: "shadow_t".into(),
+                        object_class: "file".into(),
+                        permissions: vec!["open".into(), "read".into()],
+                        condition: Some("ssh_read_shadow is true".into()),
+                        extended: false,
+                    },
+                ],
+                truncated: false,
+            },
+        };
+        let text = process_detail_lines(&snapshot, &detail).join("\n");
+        assert!(text.contains("SYSTEM FILE PERMISSIONS"));
+        assert!(text.contains("Home directory contents"));
+        assert!(text.contains("✓ ALLOWED for some labeled content — Read or inspect contents"));
+        assert!(text.contains("◇ CONDITIONAL for some labeled content"));
+        assert!(text.contains("System and service logs (/var/log)"));
+        assert!(text.contains("NO MATCHING ALLOW found in this summary"));
+        assert!(!text.contains("MICROVISOR PROFILE"));
+    }
+
+    #[test]
     fn labels_configured_only_profile_rules_as_planned() {
         let mut profile = profile();
         profile.applied = false;
@@ -1802,6 +2189,7 @@ type_transition sshd_t user_t:process staff_t;
             processes: Vec::new(),
             executables: Vec::new(),
             rules: Vec::new(),
+            paths_by_type: BTreeMap::new(),
             rule_error: None,
         };
         let mut lines = Vec::new();

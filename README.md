@@ -183,8 +183,11 @@ sudo microvisor remove <profile-id>
 - `supervise` opens a color, full-terminal inspector for current processes, their executable labels,
   Microvisor profiles, and system `*_exec_t` file-context rules. In the process view, press `Enter`
   or `d` for a scrollable explanation of the selected process: identity, exact active or planned
-  Microvisor data/ptrace/file-descriptor rules, loaded SELinux allow rules grouped into plain-language
-  file, network, and process-control actions, and the default-deny boundary. The screen uses
+  Microvisor data/ptrace/file-descriptor rules, or—for system-policy processes—a modern permission
+  list showing read and write access matched to labeled content under home directories, `/etc`, and
+  sensitive `/var` subtrees. A check mark means some labeled content matches; it never claims that
+  every file in the directory is accessible. The raw loaded SELinux allow rules remain grouped into
+  plain-language file, network, and process-control actions below the permission list. The screen uses
   `sesearch` to inspect the loaded distribution policy; the RPM installs it through its required
   `setools-console` dependency. The screen still reports an actionable error if policy inspection
   fails. Allowed rules are green, explicit and default denies are red, and configured-only plans are
