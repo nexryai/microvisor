@@ -72,15 +72,6 @@ paths, missing targets, and overlapping profiles.
 
 
 ## Usage
-
-Template generation is intentionally available without root:
-
-```bash
-microvisor generate [output.yml]
-```
-
-Run these commands as root only on a designated production target or in the CI integration VM:
-
 ```bash
 sudo microvisor validate
 sudo microvisor render <profile-id>
