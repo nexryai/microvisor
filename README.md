@@ -25,88 +25,7 @@ The headless YAML CLI is implemented, but the new transaction path still require
 SELinux Enforcing integration matrix before production use. SELinux base policies vary between
 distributions, and generated policy and recovery behavior require review.
 
-## Requirements
-
-The initial target is Fedora 44 Server and Workstation with SELinux Enforcing and:
-
-- Rust 1.85 or newer for building;
-- SELinux userspace 3.6 or newer, because Microvisor relies on CIL `deny` rules;
-- `policycoreutils`, `policycoreutils-python-utils`, `libselinux-utils`, `checkpolicy`, `m4`,
-  `setools-console`, and the reference-policy headers from `selinux-policy-devel`.
-
-GTK, Libadwaita, a display server, a desktop environment, and Polkit are not required. Server
-support means headless operation on explicitly tested SELinux distributions; it does not imply
-that every SELinux policy family is supported.
-
-CI container provisioning example (the CI container runs as root):
-
-```bash
-dnf install \
-  cargo rust \
-  policycoreutils policycoreutils-python-utils \
-  libselinux-utils selinux-policy-devel checkpolicy m4 setools-console
-```
-
-Provision equivalent dependencies before entering a local development environment. Development
-must stay unprivileged: do not run `sudo`, a root shell, a root-owned container, or Microvisor as
-root on a developer machine. Formatting, unit tests, compilation, and package-layout checks do not
-require root. Privileged SELinux integration runs only in CI's disposable Enforcing VM. Root is
-allowed on a designated production target for installation and normal Microvisor operation.
-
-## Build and install
-
-Build as an unprivileged user:
-
-```bash
-cargo build --release --locked
-```
-
-The project has no Makefile or Meson layer. Cargo is the only source-build entry point.
-
-Install only on a designated production target (or use the RPM package):
-
-```bash
-sudo install -Dpm 0755 target/release/microvisor /usr/local/bin/microvisor
-sudo install -Dpm 0644 data/microvisor.8 /usr/local/share/man/man8/microvisor.8
-sudo install -o root -g root -m 0600 data/microvisor.yml /etc/microvisor.yml
-```
-
-This installs the CLI, its manual page, and an empty `/etc/microvisor.yml`. It does not install a
-daemon or enable automatic policy mutation at boot.
-
-## COPR packaging
-
-COPR's SCM `make_srpm` method is supported by the dedicated [.copr/Makefile](.copr/Makefile). It
-archives the checked-out Git commit, vendors the exact `Cargo.lock` dependency set, and writes one
-SRPM to COPR's requested `outdir`. This Makefile is packaging-only; normal source builds continue to
-use Cargo directly.
-
-Register the Git repository once and trigger a build with a configured `copr-cli`:
-
-```bash
-copr-cli add-package-scm OWNER/PROJECT \
-  --name microvisor \
-  --clone-url https://github.com/nexryai/microvisor.git \
-  --spec microvisor.spec \
-  --method make_srpm
-copr-cli build-package OWNER/PROJECT --name microvisor --enable-net on
-```
-
-COPR invokes `.copr/Makefile` itself and uploads the resulting SRPM into the selected project. To
-build and upload an SRPM manually instead:
-
-```bash
-make -f .copr/Makefile srpm outdir="$PWD" spec=microvisor.spec
-copr-cli build OWNER/PROJECT ./microvisor-*.src.rpm
-```
-
-The SCM source-build step needs network access to download the locked Cargo crates before placing
-them in `Source1`; the binary RPM build itself uses that vendored archive offline. Local SRPM
-generation runs without root when `cargo`, `cargo-rpm-macros`, `git`, `make`, `rpmbuild`, `rpmspec`,
-`tar`, and `xz` are already installed. Dependency installation with root is limited to COPR's
-disposable source-build environment.
-
-## YAML configuration
+## Configuration
 
 Create an editable template without root privileges:
 
@@ -151,7 +70,8 @@ unsupported schema versions, ambiguous booleans, tags, anchors, aliases, merge k
 streams, excessive nesting or node counts, oversized files, invalid SELinux identifiers, unsafe
 paths, missing targets, and overlapping profiles.
 
-## Commands
+
+## Usage
 
 Template generation is intentionally available without root:
 
@@ -250,15 +170,3 @@ sudo microvisor status
 sudo semodule -l | grep microvisor
 sudo semanage fcontext -l -C | grep microvisor
 ```
-
-Use `microvisor remove <profile-id>` whenever the applied snapshot is intact. Manual recovery must
-preserve the same deny-module-first ordering described in the manual page and `AGENTS.md`.
-
-## Legacy 0.1 profiles
-
-Microvisor does not import the unreleased GUI version's per-user `profiles.json`. Automatically
-trusting mutable user configuration in a root process would cross the new privilege boundary.
-Recreate required profiles in one reviewed, root-owned `/etc/microvisor.yml` and validate it before
-applying. Earlier development builds using `/etc/microvisor/profiles.d/*.yaml` are not imported;
-merge those profile mappings manually under the new top-level `profiles` list, removing each
-profile-level `schema_version` field.
