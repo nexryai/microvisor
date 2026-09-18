@@ -84,7 +84,10 @@ It invokes SELinux tools directly with argument arrays and never passes profile
 values through a shell.
 Type-enforcement modules are compiled by invoking m4, checkmodule, and
 semodule_package directly against root-owned reference-policy sources. No shell,
-Makefile, or general-purpose build system is executed.
+Makefile, or general-purpose build system is executed. An interface supplied by
+the reference-policy distributed layer takes precedence over a same-named module
+interface in the base development headers; other duplicate interface definitions
+remain compilation errors.
 .PP
 The supervise command classifies Microvisor domains, system-policy domains,
 unconfined domains, and unreadable labels. File-context entries describe

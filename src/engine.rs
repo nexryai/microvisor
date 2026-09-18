@@ -2,6 +2,8 @@ use crate::{diagnostics, model::ProtectionProfile, policy};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
+    ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     os::fd::AsRawFd,
@@ -474,6 +476,7 @@ fn policy_source_files() -> Result<PolicySources> {
     if support.len() + interfaces.len() > MAX_POLICY_SOURCE_FILES {
         bail!("The SELinux reference-policy source set is unexpectedly large");
     }
+    let interfaces = prefer_distributed_interfaces(interfaces);
 
     let build_config = include.join("build.conf");
     validate_policy_file(&build_config)?;
@@ -482,6 +485,26 @@ fn policy_source_files() -> Result<PolicySources> {
         interfaces,
         build_config,
     })
+}
+
+fn prefer_distributed_interfaces(mut interfaces: Vec<PathBuf>) -> Vec<PathBuf> {
+    let distributed_names = interfaces
+        .iter()
+        .filter(|path| path.parent().and_then(Path::file_name) == Some("distributed".as_ref()))
+        .filter_map(|path| path.file_name().map(OsString::from))
+        .collect::<BTreeSet<_>>();
+
+    // Fedora installs interfaces from separately packaged policy modules in `distributed`. Such
+    // a package can replace a module that is also present in the base development headers. Feed
+    // only the packaged override to M4; duplicate interface names in differently named modules
+    // still reach M4 and remain fatal through __if_error.
+    interfaces.retain(|path| {
+        path.parent().and_then(Path::file_name) == Some("distributed".as_ref())
+            || path
+                .file_name()
+                .is_none_or(|name| !distributed_names.contains(name))
+    });
+    interfaces
 }
 
 fn collect_policy_files(directory: &Path, extension: &str) -> Result<Vec<PathBuf>> {
@@ -1474,7 +1497,7 @@ mod tests {
     use super::{
         AppliedState, PolicyBuildConfig, STATE_SCHEMA_VERSION, deserialize_state,
         merge_supervision_profiles, normalize_profile_with_applied, parse_major_minor,
-        parse_policy_build_config, validate_profiles,
+        parse_policy_build_config, prefer_distributed_interfaces, validate_profiles,
     };
     use crate::model::ProtectionProfile;
     use std::{
@@ -1534,6 +1557,36 @@ mod tests {
         assert!(parse_policy_build_config("TYPE ?= unexpected").is_err());
         assert!(parse_policy_build_config("MCS_CATS ?= 0").is_err());
         assert!(parse_policy_build_config("UBAC ?= maybe").is_err());
+    }
+
+    #[test]
+    fn distributed_policy_interfaces_override_same_named_base_interfaces() {
+        let interfaces = vec![
+            "/policy/contrib/example.if".into(),
+            "/policy/distributed/example.if".into(),
+            "/policy/kernel/domain.if".into(),
+        ];
+
+        assert_eq!(
+            prefer_distributed_interfaces(interfaces),
+            vec![
+                std::path::PathBuf::from("/policy/distributed/example.if"),
+                std::path::PathBuf::from("/policy/kernel/domain.if"),
+            ]
+        );
+    }
+
+    #[test]
+    fn base_interface_name_collisions_remain_visible_to_m4() {
+        let interfaces = vec![
+            "/policy/contrib/example.if".into(),
+            "/policy/system/example.if".into(),
+        ];
+
+        assert_eq!(
+            prefer_distributed_interfaces(interfaces.clone()),
+            interfaces
+        );
     }
 
     #[test]
