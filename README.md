@@ -88,7 +88,9 @@ sudo microvisor remove <profile-id>
   idempotent and attempts batch rollback if a later profile fails. After protection is active, an
   unchanged data path is recognized from the root-owned applied snapshot because the deny rule may
   prevent the CLI's own launch domain from inspecting that directory. New and changed paths still
-  undergo canonicalization and filesystem metadata checks.
+  undergo canonicalization and filesystem metadata checks. SELinux file-context equivalences such
+  as Fedora's `/usr/lib64` mapping are applied only to the `semanage fcontext` specification;
+  filesystem validation and `restorecon` continue to use the canonical on-disk path.
 - `status` compares desired profiles, root-owned snapshots, installed modules, and local
   file-context rules. Exit status 2 means drift.
 - `supervise` opens a color, full-terminal inspector for current processes, their executable labels,

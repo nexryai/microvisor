@@ -37,7 +37,9 @@ Print the deterministic policy and file-context operations for one profile.
 .TP
 .B apply
 Validate and reconcile every configured profile. Installed profiles whose YAML
-was removed are reported by status and are not silently removed.
+was removed are reported by status and are not silently removed. SELinux
+file-context equivalences are resolved for semanage rules while filesystem
+validation and relabeling continue to use canonical on-disk paths.
 .TP
 .B status
 Compare desired configuration, root-owned applied snapshots, installed modules,

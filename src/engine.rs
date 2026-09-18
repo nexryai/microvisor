@@ -23,6 +23,7 @@ const MAX_POLICY_SOURCE_FILES: usize = 4096;
 const MAX_POLICY_SOURCE_SIZE: u64 = 4 * 1024 * 1024;
 const MAX_GENERATED_POLICY_SIZE: u64 = 64 * 1024 * 1024;
 const MAX_STATE_SIZE: usize = 1024 * 1024;
+const MAX_FCONTEXT_EQUIVALENCES: usize = 4096;
 const STATE_SCHEMA_VERSION: u32 = 1;
 const TRUSTED_COMMAND_DIRS: &[&str] = &["/usr/sbin", "/usr/bin", "/sbin", "/bin"];
 
@@ -52,6 +53,24 @@ pub fn validate_desired_profiles(
     validate_profiles_with_applied(profiles, &applied)
 }
 
+pub fn render_preview(profile: &ProtectionProfile) -> Result<String> {
+    let equivalences = FcontextEquivalences::load()?;
+    render_preview_with_equivalences(profile, &equivalences)
+}
+
+fn render_preview_with_equivalences(
+    profile: &ProtectionProfile,
+    equivalences: &FcontextEquivalences,
+) -> Result<String> {
+    let executable = equivalences.rewrite(&profile.executable);
+    let directories = profile
+        .data_directories
+        .iter()
+        .map(|path| equivalences.rewrite(path))
+        .collect::<Vec<_>>();
+    policy::render_preview_with_fcontext_paths(profile, &executable, &directories)
+}
+
 fn validate_profiles_with_applied(
     profiles: Vec<ProtectionProfile>,
     applied: &[ProtectionProfile],
@@ -78,6 +97,7 @@ pub fn apply_profiles(profiles: Vec<ProtectionProfile>) -> Result<usize> {
     ensure_environment()?;
     let applied = load_all_states()?;
     let profiles = validate_profiles_with_applied(profiles, &applied)?;
+    let equivalences = FcontextEquivalences::load()?;
 
     // Build every base module and render every deny module before the first host mutation. This
     // catches configuration and compiler failures without leaving a partially reconciled set.
@@ -88,14 +108,16 @@ pub fn apply_profiles(profiles: Vec<ProtectionProfile>) -> Result<usize> {
 
     for item in &prepared {
         let previous = load_state_optional(item.profile.id)?;
-        preflight_install(&item.profile, previous.as_ref())?;
+        preflight_install(&item.profile, previous.as_ref(), &equivalences)?;
     }
 
     let mut completed: Vec<(ProtectionProfile, Option<ProtectionProfile>)> = Vec::new();
     let mut changed = 0;
     for item in &prepared {
         let previous = load_state_optional(item.profile.id)?;
-        if previous.as_ref() == Some(&item.profile) && profile_is_observed(&item.profile)? {
+        if previous.as_ref() == Some(&item.profile)
+            && profile_is_observed(&item.profile, &equivalences)?
+        {
             diagnostics::info(
                 "cli.apply",
                 format_args!("profile {} is already applied", item.profile.id),
@@ -103,8 +125,8 @@ pub fn apply_profiles(profiles: Vec<ProtectionProfile>) -> Result<usize> {
             continue;
         }
 
-        if let Err(error) = apply_prepared_transaction(item, previous.as_ref()) {
-            let rollback_error = rollback_completed(&completed).err();
+        if let Err(error) = apply_prepared_transaction(item, previous.as_ref(), &equivalences) {
+            let rollback_error = rollback_completed(&completed, &equivalences).err();
             if let Some(rollback_error) = rollback_error {
                 return Err(error.context(format!(
                     "Rolling back earlier profiles also failed: {rollback_error:#}"
@@ -125,7 +147,8 @@ pub fn remove_profile(id: Uuid) -> Result<bool> {
     let Some(profile) = load_state_optional(id)? else {
         return Ok(false);
     };
-    teardown(&profile)?;
+    let equivalences = FcontextEquivalences::load()?;
+    teardown(&profile, &equivalences)?;
     remove_state(id)?;
     Ok(true)
 }
@@ -193,6 +216,7 @@ pub fn status(desired: Vec<ProtectionProfile>) -> Result<(Vec<ProfileStatus>, bo
     ensure_state_directory()?;
     let applied = load_all_states()?;
     let desired = validate_profiles_with_applied(desired, &applied)?;
+    let equivalences = FcontextEquivalences::load()?;
     let mut result = Vec::new();
     let mut converged = true;
 
@@ -200,7 +224,7 @@ pub fn status(desired: Vec<ProtectionProfile>) -> Result<(Vec<ProfileStatus>, bo
         let state = match applied.iter().find(|item| item.id == profile.id) {
             None => "not-applied",
             Some(snapshot) if snapshot != profile => "configuration-drift",
-            Some(_) if !profile_is_observed(profile)? => "system-drift",
+            Some(_) if !profile_is_observed(profile, &equivalences)? => "system-drift",
             Some(_) => "applied",
         };
         converged &= state == "applied";
@@ -745,13 +769,14 @@ fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
 fn apply_prepared_transaction(
     prepared: &PreparedProfile,
     previous: Option<&ProtectionProfile>,
+    equivalences: &FcontextEquivalences,
 ) -> Result<()> {
     let profile = &prepared.profile;
     if let Some(old) = previous {
-        if let Err(error) = teardown(old) {
-            let recovery = teardown(old)
+        if let Err(error) = teardown(old, equivalences) {
+            let recovery = teardown(old, equivalences)
                 .and_then(|_| PreparedProfile::new(old.clone()))
-                .and_then(|old_prepared| install_prepared(&old_prepared))
+                .and_then(|old_prepared| install_prepared(&old_prepared, equivalences))
                 .and_then(|_| save_state(old));
             return match recovery {
                 Ok(()) => Err(error.context(
@@ -765,7 +790,7 @@ fn apply_prepared_transaction(
         }
     }
 
-    match install_prepared(prepared).and_then(|_| save_state(profile)) {
+    match install_prepared(prepared, equivalences).and_then(|_| save_state(profile)) {
         Ok(()) => {
             diagnostics::info(
                 "cli.transaction",
@@ -782,10 +807,10 @@ fn apply_prepared_transaction(
                 ),
             );
             let _ = remove_temporary_state(profile.id);
-            let cleanup_error = teardown(profile).err();
+            let cleanup_error = teardown(profile, equivalences).err();
             let rollback_error = previous.and_then(|old| {
                 PreparedProfile::new(old.clone())
-                    .and_then(|old_prepared| install_prepared(&old_prepared))
+                    .and_then(|old_prepared| install_prepared(&old_prepared, equivalences))
                     .and_then(|_| save_state(old))
                     .err()
             });
@@ -804,16 +829,19 @@ fn apply_prepared_transaction(
     }
 }
 
-fn rollback_completed(completed: &[(ProtectionProfile, Option<ProtectionProfile>)]) -> Result<()> {
+fn rollback_completed(
+    completed: &[(ProtectionProfile, Option<ProtectionProfile>)],
+    equivalences: &FcontextEquivalences,
+) -> Result<()> {
     let mut failures = Vec::new();
     for (current, previous) in completed.iter().rev() {
-        if let Err(error) = teardown(current).and_then(|_| remove_state(current.id)) {
+        if let Err(error) = teardown(current, equivalences).and_then(|_| remove_state(current.id)) {
             failures.push(format!("could not remove {}: {error:#}", current.id));
             continue;
         }
         if let Some(previous) = previous {
             let restored = PreparedProfile::new(previous.clone())
-                .and_then(|prepared| install_prepared(&prepared))
+                .and_then(|prepared| install_prepared(&prepared, equivalences))
                 .and_then(|_| save_state(previous));
             if let Err(error) = restored {
                 failures.push(format!("could not restore {}: {error:#}", previous.id));
@@ -911,9 +939,73 @@ fn normal_component_count(path: &Path) -> usize {
         .count()
 }
 
+#[derive(Debug, Default)]
+struct FcontextEquivalences {
+    // semanage rejects file specifications below an equivalence target. Keep the actual canonical
+    // path for filesystem operations, but register the equivalent source path in the SELinux store.
+    mappings: Vec<(PathBuf, PathBuf)>,
+}
+
+impl FcontextEquivalences {
+    fn load() -> Result<Self> {
+        let mut command = trusted_command("semanage")?;
+        let output = checked(command.args(["fcontext", "-l"]))?;
+        let text = String::from_utf8(output.stdout)
+            .context("semanage returned non-UTF-8 file-context output")?;
+        Self::parse(&text)
+    }
+
+    fn parse(text: &str) -> Result<Self> {
+        let mut mappings = Vec::new();
+        for line in text.lines() {
+            let Some((target, source)) = line.trim().split_once(" = ") else {
+                continue;
+            };
+            let target = PathBuf::from(target);
+            let source = PathBuf::from(source);
+            if !target.is_absolute() || !source.is_absolute() {
+                bail!("semanage reported an invalid file-context equivalence");
+            }
+            if let Some(existing) = mappings
+                .iter_mut()
+                .find(|(existing_target, _)| existing_target == &target)
+            {
+                existing.1 = source;
+            } else {
+                mappings.push((target, source));
+            }
+            if mappings.len() > MAX_FCONTEXT_EQUIVALENCES {
+                bail!("semanage reported too many file-context equivalences");
+            }
+        }
+
+        // Nested targets must win over their parents. The secondary key keeps the result stable
+        // even if semanage changes its display order.
+        mappings.sort_by(|left, right| {
+            right
+                .0
+                .components()
+                .count()
+                .cmp(&left.0.components().count())
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        Ok(Self { mappings })
+    }
+
+    fn rewrite(&self, path: &Path) -> PathBuf {
+        for (target, source) in &self.mappings {
+            if let Ok(remainder) = path.strip_prefix(target) {
+                return source.join(remainder);
+            }
+        }
+        path.to_owned()
+    }
+}
+
 fn preflight_install(
     profile: &ProtectionProfile,
     previous: Option<&ProtectionProfile>,
+    equivalences: &FcontextEquivalences,
 ) -> Result<()> {
     ensure_no_profile_conflicts(profile)?;
     let ids = profile.identifiers();
@@ -922,19 +1014,20 @@ fn preflight_install(
         ensure_module_absent(&ids.deny_module)?;
     }
 
-    let executable_regex = policy::selinux_path_regex(&profile.executable)?;
+    let executable_regex = policy::selinux_path_regex(&equivalences.rewrite(&profile.executable))?;
     let previous_executable_regex = previous
-        .map(|item| policy::selinux_path_regex(&item.executable))
+        .map(|item| policy::selinux_path_regex(&equivalences.rewrite(&item.executable)))
         .transpose()?;
     if previous_executable_regex.as_deref() != Some(&executable_regex) {
         ensure_fcontext_absent(&executable_regex)?;
     }
     for directory in &profile.data_directories {
-        let regex = policy::recursive_directory_regex(directory)?;
+        let regex = policy::recursive_directory_regex(&equivalences.rewrite(directory))?;
         let owned_by_previous = previous.is_some_and(|item| {
             item.data_directories
                 .iter()
-                .filter_map(|path| policy::recursive_directory_regex(path).ok())
+                .map(|path| equivalences.rewrite(path))
+                .filter_map(|path| policy::recursive_directory_regex(&path).ok())
                 .any(|previous_regex| previous_regex == regex)
         });
         if !owned_by_previous {
@@ -1089,16 +1182,23 @@ fn fcontext_rule_exists(regex: &str) -> Result<bool> {
     }))
 }
 
-fn profile_is_observed(profile: &ProtectionProfile) -> Result<bool> {
+fn profile_is_observed(
+    profile: &ProtectionProfile,
+    equivalences: &FcontextEquivalences,
+) -> Result<bool> {
     let ids = profile.identifiers();
     if !module_exists(&ids.module)? || !module_exists(&ids.deny_module)? {
         return Ok(false);
     }
-    if !fcontext_rule_exists(&policy::selinux_path_regex(&profile.executable)?)? {
+    if !fcontext_rule_exists(&policy::selinux_path_regex(
+        &equivalences.rewrite(&profile.executable),
+    )?)? {
         return Ok(false);
     }
     for directory in &profile.data_directories {
-        if !fcontext_rule_exists(&policy::recursive_directory_regex(directory)?)? {
+        if !fcontext_rule_exists(&policy::recursive_directory_regex(
+            &equivalences.rewrite(directory),
+        )?)? {
             return Ok(false);
         }
     }
@@ -1169,7 +1269,7 @@ impl PreparedProfile {
     }
 }
 
-fn install_prepared(prepared: &PreparedProfile) -> Result<()> {
+fn install_prepared(prepared: &PreparedProfile, equivalences: &FcontextEquivalences) -> Result<()> {
     let profile = &prepared.profile;
     let ids = profile.identifiers();
 
@@ -1184,7 +1284,11 @@ fn install_prepared(prepared: &PreparedProfile) -> Result<()> {
     .context("Could not install the SELinux type-enforcement module")?;
     diagnostics::info("cli.apply", format_args!("installed module {}", ids.module));
 
-    add_file_context(&profile.executable, &ids.exec_type, true)?;
+    add_file_context(
+        &equivalences.rewrite(&profile.executable),
+        &ids.exec_type,
+        true,
+    )?;
     let mut restorecon = trusted_command("restorecon")?;
     checked(restorecon.arg("-v").arg(&profile.executable))
         .context("Could not label the application executable")?;
@@ -1194,7 +1298,7 @@ fn install_prepared(prepared: &PreparedProfile) -> Result<()> {
     );
 
     for (index, directory) in profile.data_directories.iter().enumerate() {
-        add_file_context(directory, &ids.data_type, false)?;
+        add_file_context(&equivalences.rewrite(directory), &ids.data_type, false)?;
         let mut restorecon = trusted_command("restorecon")?;
         checked(restorecon.arg("-RFv").arg(directory))
             .with_context(|| format!("Could not label {}", directory.display()))?;
@@ -1231,7 +1335,7 @@ fn install_prepared(prepared: &PreparedProfile) -> Result<()> {
     Ok(())
 }
 
-fn teardown(profile: &ProtectionProfile) -> Result<()> {
+fn teardown(profile: &ProtectionProfile, equivalences: &FcontextEquivalences) -> Result<()> {
     let ids = profile.identifiers();
     diagnostics::info(
         "cli.teardown",
@@ -1244,7 +1348,7 @@ fn teardown(profile: &ProtectionProfile) -> Result<()> {
         format_args!("deny module is absent for profile {}", profile.id),
     );
 
-    delete_file_context(&profile.executable, true)?;
+    delete_file_context(&equivalences.rewrite(&profile.executable), true)?;
     if profile.executable.exists() {
         let mut restorecon = trusted_command("restorecon")?;
         checked(restorecon.arg("-v").arg(&profile.executable))
@@ -1252,7 +1356,7 @@ fn teardown(profile: &ProtectionProfile) -> Result<()> {
     }
 
     for directory in &profile.data_directories {
-        delete_file_context(directory, false)?;
+        delete_file_context(&equivalences.rewrite(directory), false)?;
         if directory.exists() {
             let mut restorecon = trusted_command("restorecon")?;
             checked(restorecon.arg("-RFv").arg(directory)).with_context(|| {
@@ -1495,9 +1599,10 @@ fn find_command(command: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppliedState, PolicyBuildConfig, STATE_SCHEMA_VERSION, deserialize_state,
-        merge_supervision_profiles, normalize_profile_with_applied, parse_major_minor,
-        parse_policy_build_config, prefer_distributed_interfaces, validate_profiles,
+        AppliedState, FcontextEquivalences, PolicyBuildConfig, STATE_SCHEMA_VERSION,
+        deserialize_state, merge_supervision_profiles, normalize_profile_with_applied,
+        parse_major_minor, parse_policy_build_config, prefer_distributed_interfaces,
+        render_preview_with_equivalences, validate_profiles,
     };
     use crate::model::ProtectionProfile;
     use std::{
@@ -1574,6 +1679,69 @@ mod tests {
                 std::path::PathBuf::from("/policy/kernel/domain.if"),
             ]
         );
+    }
+
+    #[test]
+    fn rewrites_paths_below_selinux_fcontext_equivalences() {
+        let equivalences = FcontextEquivalences::parse(
+            r#"
+                SELinux Distribution fcontext Equivalence
+
+                /usr/lib64 = /usr/lib
+                /run/systemd/system = /usr/lib/systemd/system
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            equivalences.rewrite(std::path::Path::new("/usr/lib64/firefox/firefox")),
+            std::path::PathBuf::from("/usr/lib/firefox/firefox")
+        );
+        assert_eq!(
+            equivalences.rewrite(std::path::Path::new("/run/systemd/system/example.service")),
+            std::path::PathBuf::from("/usr/lib/systemd/system/example.service")
+        );
+        assert_eq!(
+            equivalences.rewrite(std::path::Path::new("/usr/lib64-extra/application")),
+            std::path::PathBuf::from("/usr/lib64-extra/application")
+        );
+    }
+
+    #[test]
+    fn prefers_the_most_specific_fcontext_equivalence() {
+        let equivalences =
+            FcontextEquivalences::parse("/srv = /var/lib\n/srv/app = /opt/application\n").unwrap();
+
+        assert_eq!(
+            equivalences.rewrite(std::path::Path::new("/srv/app/data/file")),
+            std::path::PathBuf::from("/opt/application/data/file")
+        );
+    }
+
+    #[test]
+    fn local_fcontext_equivalence_overrides_the_distribution_mapping() {
+        let equivalences =
+            FcontextEquivalences::parse("/srv = /var/lib/distribution\n/srv = /var/lib/local\n")
+                .unwrap();
+
+        assert_eq!(
+            equivalences.rewrite(std::path::Path::new("/srv/application/data")),
+            std::path::PathBuf::from("/var/lib/local/application/data")
+        );
+    }
+
+    #[test]
+    fn preview_separates_fcontext_and_filesystem_paths() {
+        let equivalences = FcontextEquivalences::parse("/usr/lib64 = /usr/lib\n").unwrap();
+        let mut profile = ProtectionProfile::new();
+        profile.name = "Firefox".into();
+        profile.executable = "/usr/lib64/firefox/firefox".into();
+        profile.data_directories = vec!["/var/lib/firefox/profile".into()];
+
+        let preview = render_preview_with_equivalences(&profile, &equivalences).unwrap();
+        assert!(preview.contains("fcontext -a -f f"));
+        assert!(preview.contains("'/usr/lib/firefox/firefox'"));
+        assert!(preview.contains("restorecon -v '/usr/lib64/firefox/firefox'"));
     }
 
     #[test]

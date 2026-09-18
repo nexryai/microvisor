@@ -1,6 +1,6 @@
 use crate::model::{PROFILE_SCHEMA_VERSION, ProtectionProfile};
 use anyhow::{Context, Result, bail};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 // Cover every SELinux filesystem object class. Fedora's unconfined policy grants access through
 // broad file-type attributes, so omitting even device-node classes leaves a residual allow rule.
@@ -197,10 +197,21 @@ pub fn render_deny_cil(profile: &ProtectionProfile) -> Result<String> {
 }
 
 pub fn render_preview(profile: &ProtectionProfile) -> Result<String> {
+    render_preview_with_fcontext_paths(profile, &profile.executable, &profile.data_directories)
+}
+
+pub(crate) fn render_preview_with_fcontext_paths(
+    profile: &ProtectionProfile,
+    fcontext_executable: &Path,
+    fcontext_directories: &[PathBuf],
+) -> Result<String> {
+    if fcontext_directories.len() != profile.data_directories.len() {
+        bail!("Every protected directory requires one SELinux file-context path");
+    }
     let ids = profile.identifiers();
     let te = render_type_enforcement(profile)?;
     let cil = render_deny_cil(profile)?;
-    let executable = selinux_path_regex(&profile.executable)?;
+    let executable = selinux_path_regex(fcontext_executable)?;
 
     let mut operations = format!(
         "# File-context operations\nsemanage fcontext -a -f f -t {} {}\nrestorecon -v {}\n",
@@ -209,8 +220,9 @@ pub fn render_preview(profile: &ProtectionProfile) -> Result<String> {
         shell_quote(&profile.executable.to_string_lossy())
     );
 
-    for directory in &profile.data_directories {
-        let regex = recursive_directory_regex(directory)?;
+    for (directory, fcontext_directory) in profile.data_directories.iter().zip(fcontext_directories)
+    {
+        let regex = recursive_directory_regex(fcontext_directory)?;
         operations.push_str(&format!(
             "semanage fcontext -a -t {} {}\nrestorecon -RFv {}\n",
             ids.data_type,

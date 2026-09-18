@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use microvisor::{config, diagnostics, engine, policy, supervise, template};
+use microvisor::{config, diagnostics, engine, supervise, template};
 use std::{env, path::Path};
 use uuid::Uuid;
 
@@ -60,7 +60,7 @@ fn run() -> Result<i32> {
                 .iter()
                 .find(|profile| profile.id == id)
                 .with_context(|| format!("No configured profile exists for {id}"))?;
-            print!("{}", policy::render_preview(profile)?);
+            print!("{}", engine::render_preview(profile)?);
             Ok(0)
         }
         [command] if command == "apply" => {

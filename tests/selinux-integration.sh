@@ -37,6 +37,19 @@ transaction_started=false
 created_test_root=false
 supervised_pid=
 
+equivalence_profile_id=22222222-3333-4444-8555-666666666666
+equivalence_compact_id=${equivalence_profile_id//-/}
+equivalence_module="microvisor_${equivalence_compact_id}"
+equivalence_deny_module="${equivalence_module}_deny"
+equivalence_exec_type="${equivalence_module}_exec_t"
+equivalence_root="/usr/lib64/microvisor-ci/$equivalence_profile_id"
+equivalence_executable="$equivalence_root/application"
+equivalence_executable_regex="/usr/lib/microvisor-ci/$equivalence_profile_id/application"
+equivalence_data_directory="$test_root/equivalence-data"
+equivalence_data_regex="${equivalence_data_directory}(/.*)?"
+equivalence_state_file="/var/lib/microvisor/profiles/$equivalence_profile_id.json"
+equivalence_transaction_started=false
+
 module_present() {
   semodule -l |
     awk -v expected="$1" '$1 == expected { found = 1 } END { exit !found }'
@@ -79,10 +92,26 @@ cleanup() {
     rm -f -- "$state_file"
   fi
 
+  if [[ "$equivalence_transaction_started" == true ]]; then
+    "$microvisor_path" remove "$equivalence_profile_id" >/dev/null 2>&1
+    semodule -r "$equivalence_deny_module" >/dev/null 2>&1
+    semanage fcontext -d -f f "$equivalence_executable_regex" >/dev/null 2>&1
+    semanage fcontext -d "$equivalence_data_regex" >/dev/null 2>&1
+    [[ ! -e "$equivalence_executable" ]] || restorecon -v "$equivalence_executable" >/dev/null 2>&1
+    [[ ! -d "$equivalence_data_directory" ]] || \
+      restorecon -RFv "$equivalence_data_directory" >/dev/null 2>&1
+    semodule -r "$equivalence_module" >/dev/null 2>&1
+    rm -f -- "$equivalence_state_file"
+  fi
+
   rm -f -- "$config_file" "$config_file.disabled"
   if [[ "$created_test_root" == true && "$test_root" == /var/lib/microvisor-ci/* ]]; then
     rm -rf -- "$test_root"
   fi
+  if [[ "$equivalence_root" == /usr/lib64/microvisor-ci/* ]]; then
+    rm -rf -- "$equivalence_root"
+  fi
+  rmdir /usr/lib64/microvisor-ci >/dev/null 2>&1
   rmdir /var/lib/microvisor-ci >/dev/null 2>&1
   rm -rf -- "$result_directory"
   exit "$status"
@@ -269,6 +298,43 @@ protected_type=$("$executable" -c 'stat -c %C "$1" | cut -d: -f3' -- "$secret_fi
 [[ $(/usr/bin/cat "$secret_file") == microvisor-ci-secret ]]
 
 transaction_started=false
+
+mkdir -p "$equivalence_root" "$equivalence_data_directory"
+cp /usr/bin/bash "$equivalence_executable"
+chmod 0755 "$equivalence_executable"
+restorecon -RF "$equivalence_root" "$equivalence_data_directory"
+
+cat >"$config_file" <<EOF
+schema_version: 1
+profiles:
+  - id: $equivalence_profile_id
+    name: File-context equivalence test
+    executable: $equivalence_executable
+    data_directories:
+      - $equivalence_data_directory
+    launch_domain: unconfined_t
+    launch_role: unconfined_r
+    block_ptrace: true
+    block_fd_use: false
+EOF
+chmod 0600 "$config_file"
+
+equivalence_transaction_started=true
+"$microvisor_path" apply
+module_present "$equivalence_module"
+module_present "$equivalence_deny_module"
+fcontext_present "$equivalence_executable_regex"
+[[ $(selinux_type "$equivalence_executable") == "$equivalence_exec_type" ]]
+[[ -f "$equivalence_state_file" ]]
+
+"$microvisor_path" remove "$equivalence_profile_id"
+! module_present "$equivalence_module"
+! module_present "$equivalence_deny_module"
+! fcontext_present "$equivalence_executable_regex"
+[[ $(selinux_type "$equivalence_executable") != "$equivalence_exec_type" ]]
+[[ ! -e "$equivalence_state_file" ]]
+equivalence_transaction_started=false
+
 write_empty_config
 "$microvisor_path" validate | grep -Fq 'Validated 0 profile(s).'
 echo "SELinux integration test passed."
