@@ -54,6 +54,10 @@ jobs:
           test "${#srpms[@]}" -eq 1
           package_name=$(rpm -qp --qf '%{NAME}' "${srpms[0]}")
           package_version=$(rpm -qp --qf '%{VERSION}' "${srpms[0]}")
+          mapfile -t runtime_requires < <(rpmspec -q --requires microvisor.spec)
+          printf '%s\n' "${runtime_requires[@]}" | grep -Fx selinux-policy-devel
+          ! printf '%s\n' "${runtime_requires[@]}" | grep -Fx \
+            /usr/share/selinux/devel/include/build.conf
           rpm -qpl "${srpms[0]}" | grep -Fx \
             "${package_name}-${package_version}.tar.xz"
           rpm -qpl "${srpms[0]}" | grep -Fx \

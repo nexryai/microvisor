@@ -1,7 +1,7 @@
 %bcond check 1
 
 Name:           microvisor
-Version:        0.1.2
+Version:        0.1.3
 Release:        1%{?buildtag}%{?dist}
 Summary:        Headless SELinux protection profile manager
 
@@ -25,8 +25,8 @@ Requires:       libselinux-utils >= 3.6
 Requires:       m4
 Requires:       policycoreutils >= 3.6
 Requires:       policycoreutils-python-utils >= 3.6
+Requires:       selinux-policy-devel
 Requires:       setools-console
-Requires:       /usr/share/selinux/devel/include/build.conf
 
 %description
 Microvisor is a headless root command-line tool that reconciles versioned YAML
@@ -76,6 +76,10 @@ cargo test --release --locked
 %config(noreplace) %attr(0600,root,root) %{_sysconfdir}/microvisor.yml
 
 %changelog
+* Fri Sep 18 2026 Nexryai <nexryai@users.noreply.github.com> - 0.1.3-1
+- Handle SELinux file-context equivalence mappings
+- Require selinux-policy-devel by package name so DNF can update it with the base policy
+
 * Mon Aug 17 2026 Nexryai <nexryai@users.noreply.github.com> - 0.1.2-1
 - Add process policy details to supervise
 - Require setools-console for loaded SELinux allow-rule inspection
