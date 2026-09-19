@@ -147,6 +147,19 @@ pub fn remove_profile(id: Uuid) -> Result<bool> {
     let Some(profile) = load_state_optional(id)? else {
         return Ok(false);
     };
+    let ids = profile.identifiers();
+    let running = find_processes_by_type(&ids.app_type)?;
+    if !running.is_empty() {
+        let mut detail = format!(
+            "Cannot remove profile {id} because {} process(es) are still running in domain {}:",
+            running.len(),
+            ids.app_type
+        );
+        for proc in &running {
+            detail.push_str(&format!("\n  pid={} comm={}", proc.pid, proc.comm));
+        }
+        bail!("{detail}");
+    }
     let equivalences = FcontextEquivalences::load()?;
     teardown(&profile, &equivalences)?;
     remove_state(id)?;
@@ -1333,6 +1346,50 @@ fn install_prepared(prepared: &PreparedProfile, equivalences: &FcontextEquivalen
     );
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct RunningProcess {
+    pid: u32,
+    comm: String,
+}
+
+fn find_processes_by_type(domain_type: &str) -> Result<Vec<RunningProcess>> {
+    let mut processes = Vec::new();
+    let entries = match fs::read_dir("/proc") {
+        Ok(entries) => entries,
+        Err(error) => {
+            diagnostics::debug(
+                "cli.process-scan",
+                format_args!("could not read /proc: {error}"),
+            );
+            return Ok(processes);
+        }
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|value| value.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let base = entry.path();
+        let Ok(context) = fs::read_to_string(base.join("attr/current")) else {
+            continue;
+        };
+        let Some(process_type) = context.split(':').nth(2) else {
+            continue;
+        };
+        if process_type != domain_type {
+            continue;
+        }
+        let comm = fs::read_to_string(base.join("comm"))
+            .map(|value| value.trim().to_owned())
+            .unwrap_or_else(|_| "?".to_owned());
+        processes.push(RunningProcess { pid, comm });
+    }
+    Ok(processes)
 }
 
 fn teardown(profile: &ProtectionProfile, equivalences: &FcontextEquivalences) -> Result<()> {
