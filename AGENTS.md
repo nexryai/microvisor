@@ -43,7 +43,7 @@ an explicitly designated production target. Do not use a production host for dev
 - `.github/workflows/ci.yml`: Cargo build, unit, lint, and package-layout checks.
 - `.github/workflows/selinux-integration.yml`: destructive Enforcing-mode integration tests.
 - `.copr/Makefile`: COPR SCM `make_srpm` adapter; source/vendor archives and SRPM assembly only.
-- `data/microvisor.8`: installed command, configuration, exit-status, and recovery reference.
+- `data/microvisor.md`: installed command, configuration, exit-status, and recovery reference.
 - `PLANS.md`: roadmap and decisions not yet implemented.
 
 ## Non-negotiable security boundaries

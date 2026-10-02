@@ -53,7 +53,6 @@ cargo build --release --locked
 
 %install
 install -Dpm 0755 target/release/microvisor %{buildroot}%{_bindir}/microvisor
-install -Dpm 0644 data/microvisor.8 %{buildroot}%{_mandir}/man8/microvisor.8
 install -Dpm 0600 data/microvisor.yml %{buildroot}%{_sysconfdir}/microvisor.yml
 
 %if %{with check}
@@ -71,8 +70,8 @@ cargo test --release --locked
 %license cargo-vendor.txt
 %doc README.md
 %doc PLANS.md
+%doc data/microvisor.md
 %{_bindir}/microvisor
-%{_mandir}/man8/microvisor.8*
 %config(noreplace) %attr(0600,root,root) %{_sysconfdir}/microvisor.yml
 
 %changelog

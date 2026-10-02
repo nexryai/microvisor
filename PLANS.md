@@ -24,6 +24,8 @@ Accepted direction:
 - Mutations are serialized with a lock under `/run/microvisor/`.
 - No GUI, desktop integration, Polkit action, helper protocol, daemon, or network service is part of
   the target architecture.
+- Administrator documentation is maintained and packaged as Markdown without Roff sources or
+  manual-page generation.
 - Cargo is the only source-build entry point. Runtime policy compilation invokes the installed
   reference-policy M4 sources, `checkmodule`, and `semodule_package` directly without Make or Meson.
 - Server support means headless execution and automated lifecycle tests on named SELinux platforms;
@@ -97,7 +99,7 @@ Priority: highest.
 - [x] Remove the GUI sources, helper binary, icons, resources, desktop file, AppStream metadata, and
   Polkit action after replacement tests pass.
 - [x] Remove Meson, Ninja, Makefile execution, and build wrappers. Build only with Cargo and let the
-  RPM spec install the binary, manual page, and `/etc/microvisor.yml` directly.
+  RPM spec install the binary, Markdown reference, and `/etc/microvisor.yml` directly.
 - [x] Add a packaging-only `.copr/Makefile` implementing COPR SCM `make_srpm`: archive the checked
   out commit, vendor locked Cargo dependencies, produce one SRPM, and test its source payload in CI.
 - [x] Add a migration note for users of the unreleased 0.1 JSON profiles; do not auto-import mutable
@@ -162,7 +164,7 @@ Exit criteria:
   path-oriented permission list. Correlate loaded allow targets with file-context patterns and show
   read and write matches separately for home directories, `/etc`, and sensitive `/var` subtrees,
   without turning partial or conditional matches into whole-directory claims.
-- [x] Add a manual page covering configuration ownership, deployment, status, rollback, and
+- [x] Add a Markdown reference covering configuration ownership, deployment, status, rollback, and
   emergency recovery.
 
 Exit criteria:

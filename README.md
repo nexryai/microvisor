@@ -127,6 +127,11 @@ still directs administrators to AVC logs for the authoritative explanation of an
 Microvisor uses the SETools 4.6-compatible `sesearch -A -s <domain>` form; the removed legacy `-C`
 option must not be reintroduced.
 
+## Command reference
+
+See [the command reference](data/microvisor.md) for commands, files, exit statuses, and recovery.
+The RPM installs this Markdown document under `/usr/share/doc/microvisor/`.
+
 ## Diagnostics
 
 Microvisor writes diagnostics to standard error and reserves standard output for requested output

@@ -1,51 +1,60 @@
-.TH MICROVISOR 8 "September 2026" "Microvisor 0.1.3" "System Administration"
-.SH NAME
-microvisor \- manage YAML-defined SELinux application protection profiles
-.SH SYNOPSIS
-.B microvisor
-.RI { validate | apply | status | supervise | help | version }
-.br
-.B microvisor generate
-.RI [ output.yml ]
-.br
-.B microvisor render
-.I profile-id
-.br
-.B microvisor remove
-.I profile-id
-.SH DESCRIPTION
+# microvisor
+
+Microvisor 0.1.3 — System administration reference
+
+## Name
+
+microvisor - manage YAML-defined SELinux application protection profiles
+
+## Synopsis
+
+```text
+microvisor {validate|apply|status|supervise|help|version}
+microvisor generate [output.yml]
+microvisor render profile-id
+microvisor remove profile-id
+```
+
+## Description
+
 Microvisor is a short-lived, headless root command that generates and applies
-per-application SELinux policy. Desired profiles are read from regular YAML
-file
-.IR /etc/microvisor.yml .
+per-application SELinux policy. Desired profiles are read from the regular YAML
+file `/etc/microvisor.yml`.
 Generate, help, and version do not require effective UID zero. All other
 commands do.
-.SH COMMANDS
-.TP
-.BI "generate [" output.yml "]"
+
+## Commands
+
+**generate [output.yml]**
+
 Create a mode 0600 complete YAML configuration containing one profile with a
 randomly generated UUID. Existing paths are never overwritten, and explicit
 output names must end in .yml. Without an output path, write microvisor.yml in
 the current directory.
-.TP
-.B validate
+
+**validate**
+
 Parse, normalize, and validate the complete desired configuration without
 changing SELinux state.
-.TP
-.BI "render " profile-id
+
+**render profile-id**
+
 Print the deterministic policy and file-context operations for one profile.
-.TP
-.B apply
+
+**apply**
+
 Validate and reconcile every configured profile. Installed profiles whose YAML
 was removed are reported by status and are not silently removed. SELinux
 file-context equivalences are resolved for semanage rules while filesystem
 validation and relabeling continue to use canonical on-disk paths.
-.TP
-.B status
+
+**status**
+
 Compare desired configuration, root-owned applied snapshots, installed modules,
 and local file-context rules. Exit status 2 indicates drift.
-.TP
-.B supervise
+
+**supervise**
+
 Open a full-terminal, color inspector showing current processes and SELinux
 domains, executable labels, Microvisor restrictions, and system executable
 file-context rules. Arrow keys or j/k select a row; Tab or 1/2/3 changes view;
@@ -62,23 +71,30 @@ does not override Unix permissions or other SELinux constraints. r refreshes
 policy details; q or
 Control-C exits. If standard input or output is not a terminal, print one
 tab-separated process snapshot and exit.
-.TP
-.BI "remove " profile-id
+
+**remove profile-id**
+
 Remove an applied profile using its root-owned snapshot, restore labels, and
 delete its snapshot.
-.SH FILES
-.TP
-.I /etc/microvisor.yml
+
+## Files
+
+`/etc/microvisor.yml`
+
 The sole desired-configuration input. This root-owned regular file contains a
 versioned profiles list, must not be writable by group or other users, and must
 have exactly one hard link. Symlinks are rejected.
-.TP
-.I /var/lib/microvisor/profiles/*.json
+
+`/var/lib/microvisor/profiles/*.json`
+
 Root-only applied-state snapshots used for status, rollback, and recovery.
-.TP
-.I /run/microvisor/transaction.lock
+
+`/run/microvisor/transaction.lock`
+
 Root-only lock serializing all mutating transactions.
-.SH SECURITY
+
+## Security
+
 YAML is treated as hostile input even though it is root-controlled. Microvisor
 rejects unsupported schema versions, unknown fields, YAML tags, anchors,
 aliases, merge keys, multiple documents, unsafe paths, and overlapping profiles.
@@ -90,7 +106,7 @@ Makefile, or general-purpose build system is executed. An interface supplied by
 the reference-policy distributed layer takes precedence over a same-named module
 interface in the base development headers; other duplicate interface definitions
 remain compilation errors.
-.PP
+
 The supervise command classifies Microvisor domains, system-policy domains,
 unconfined domains, and unreadable labels. File-context entries describe
 label assignment, not the complete allow graph. Its process detail screen shows
@@ -101,14 +117,16 @@ allow targets with path patterns to produce its file-permission list. If either
 inspection fails, no distribution-policy decision is inferred. SELinux default-denies
 operations without a matching allow, and AVC logs remain authoritative for a
 specific attempted action. Microvisor uses the SETools 4.6-compatible
-"sesearch -A -s domain" form and does not pass the removed legacy -C option.
-.SH RECOVERY
-Use
-.B microvisor remove
-with the profile UUID whenever the applied snapshot is available. Manual
+`sesearch -A -s domain` form and does not pass the removed legacy -C option.
+
+## Recovery
+
+Use `microvisor remove` with the profile UUID whenever the applied snapshot is available. Manual
 recovery must remove the profile-specific deny module first, delete the local
 file-context rules, run restorecon on the executable and protected directories,
 and only then remove the base module. Removing the base module while files still
 carry its custom types can leave orphaned labels.
-.SH EXIT STATUS
+
+## Exit status
+
 Zero indicates success, 1 indicates an error, and 2 from status indicates drift.
