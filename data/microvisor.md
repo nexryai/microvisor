@@ -75,7 +75,9 @@ tab-separated process snapshot and exit.
 **remove profile-id**
 
 Remove an applied profile using its root-owned snapshot, restore labels, and
-delete its snapshot.
+delete its snapshot. If any process is still running in the profile's
+SELinux domain, removal is refused to prevent an AVC storm from an invalid
+stale domain.
 
 ## Files
 
