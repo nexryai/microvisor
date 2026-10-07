@@ -1,8 +1,7 @@
 # Microvisor
 
 Microvisor is a headless, root-operated command-line tool for managing per-application SELinux
-protection profiles. Profiles are declared together in one YAML file, so the same configuration can
-be reviewed, versioned, and deployed on workstations and servers without a graphical session.
+protection profiles.
 
 A profile creates:
 
@@ -13,10 +12,6 @@ A profile creates:
 - a CIL `deny` module that subtracts access to the protected data type from every type except the
   protected application domain;
 - optional cross-domain `ptrace` and file-descriptor restrictions.
-
-Microvisor runs as one short-lived root process. It has no GUI, helper process, Polkit, desktop
-session, display-server, or network-service dependency. Root is required because policy module
-installation, file-context changes, and relabeling are privileged operations.
 
 ## Status
 
